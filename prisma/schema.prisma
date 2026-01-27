@@ -9,15 +9,180 @@ generator client {
 }
 
 datasource db {
-  provider = "postgresql"
-  url      = env("POSTGRES_PRISMA_URL")
+  provider  = "postgresql"
+  url       = env("POSTGRES_PRISMA_URL")
   directUrl = env("POSTGRES_URL_NON_POOLING")
 }
 
+// ============================================================================
+// Enums
+// ============================================================================
+
+enum CoachType {
+  NONE
+  VALIDATE
+  NUDGE
+}
+
+// ============================================================================
+// User (extended for Bluum)
+// ============================================================================
+
 model User {
-  id          String   @id @default(cuid())
-  clerkUserId String   @unique
-  email       String?
-  createdAt   DateTime @default(now())
-  updatedAt   DateTime @updatedAt
+  id                          String    @id @default(cuid())
+  clerkUserId                 String    @unique
+  email                       String?
+  displayName                 String?
+  timezone                    String?
+  onboardingCompletedAt       DateTime?
+  reflectionReminderEnabled   Boolean   @default(true)
+  reflectionReminderTimeLocal String?   // "HH:MM" format
+  createdAt                   DateTime  @default(now())
+  updatedAt                   DateTime  @updatedAt
+
+  // Relations
+  dailyStatuses       DailyStatus[]
+  promptHistories     PromptHistory[]
+  dailyReflections    DailyReflection[]
+  reflectionAddendums ReflectionAddendum[]
+  moodLogs            MoodLog[]
+  gratitudeMoments    GratitudeMoment[]
+  userSummaries       UserSummary[]
+}
+
+// ============================================================================
+// Daily Status - tracks daily "done/not done" for streaks
+// ============================================================================
+
+model DailyStatus {
+  id              String    @id @default(cuid())
+  userId          String
+  dateLocal       String    // YYYY-MM-DD
+  promptId        String
+  promptText      String
+  didSwapPrompt   Boolean   @default(false)
+  hasReflection   Boolean   @default(false)
+  hasMood         Boolean   @default(false)
+  reminderSentAt  DateTime?
+  followupSentAt  DateTime?
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+
+  user User @relation(fields: [userId], references: [id])
+
+  @@unique([userId, dateLocal])
+  @@index([userId])
+  @@index([dateLocal])
+}
+
+// ============================================================================
+// Prompt History - tracks prompt usage for rotation
+// ============================================================================
+
+model PromptHistory {
+  id        String   @id @default(cuid())
+  userId    String
+  dateLocal String   // YYYY-MM-DD
+  promptId  String
+  tagsUsed  Json     // string[]
+  createdAt DateTime @default(now())
+
+  user User @relation(fields: [userId], references: [id])
+
+  @@unique([userId, dateLocal])
+  @@index([userId])
+}
+
+// ============================================================================
+// Daily Reflection - the core gratitude entry
+// ============================================================================
+
+model DailyReflection {
+  id           String    @id @default(cuid())
+  userId       String
+  dateLocal    String    // YYYY-MM-DD
+  promptId     String
+  promptText   String
+  responseText String
+  coachType    CoachType @default(NONE)
+  coachText    String?
+  createdAt    DateTime  @default(now())
+
+  user User @relation(fields: [userId], references: [id])
+
+  @@unique([userId, dateLocal])
+  @@index([userId])
+  @@index([dateLocal])
+}
+
+// ============================================================================
+// Reflection Addendum - one append-only addition per day
+// ============================================================================
+
+model ReflectionAddendum {
+  id        String   @id @default(cuid())
+  userId    String
+  dateLocal String   // YYYY-MM-DD
+  text      String
+  createdAt DateTime @default(now())
+
+  user User @relation(fields: [userId], references: [id])
+
+  @@unique([userId, dateLocal])
+  @@index([userId])
+}
+
+// ============================================================================
+// Mood Log - optional daily mood tracking
+// ============================================================================
+
+model MoodLog {
+  id        String   @id @default(cuid())
+  userId    String
+  dateLocal String   // YYYY-MM-DD
+  rating    Int      // 1-5
+  tags      Json?    // string[]
+  note      String?
+  createdAt DateTime @default(now())
+
+  user User @relation(fields: [userId], references: [id])
+
+  @@unique([userId, dateLocal])
+  @@index([userId])
+}
+
+// ============================================================================
+// Gratitude Moment - quick captures (text and/or image)
+// ============================================================================
+
+model GratitudeMoment {
+  id        String   @id @default(cuid())
+  userId    String
+  text      String?
+  imageUrl  String?
+  createdAt DateTime @default(now())
+
+  user User @relation(fields: [userId], references: [id])
+
+  @@index([userId])
+  @@index([createdAt])
+}
+
+// ============================================================================
+// User Summary - weekly/monthly summaries (future generation)
+// ============================================================================
+
+model UserSummary {
+  id               String   @id @default(cuid())
+  userId           String
+  periodType       String   // "WEEKLY" | "MONTHLY"
+  periodStartLocal String   // YYYY-MM-DD
+  periodEndLocal   String   // YYYY-MM-DD
+  summaryText      String
+  createdAt        DateTime @default(now())
+
+  user User @relation(fields: [userId], references: [id])
+
+  @@unique([userId, periodType, periodStartLocal])
+  @@index([userId])
 }

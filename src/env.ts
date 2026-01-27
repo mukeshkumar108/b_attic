@@ -12,6 +12,9 @@ const envSchema = z.object({
   POSTGRES_URL_NON_POOLING: z.string().min(1),
   BLOB_READ_WRITE_TOKEN: z.string().min(1),
   CLERK_WEBHOOK_SECRET: z.string().min(1),
+  // OpenRouter for LLM calls (optional - fallback behavior if not set)
+  OPENROUTER_API_KEY: z.string().min(1).optional(),
+  OPENROUTER_MODEL: z.string().optional(),
 });
 
 export const env = envSchema.parse(process.env);
