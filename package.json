@@ -11,6 +11,7 @@
     "test:run": "vitest run"
   },
   "dependencies": {
+    "@clerk/backend": "2.29.2",
     "@clerk/nextjs": "^6.36.7",
     "@prisma/client": "6.15.0",
     "@vercel/blob": "^2.0.0",
