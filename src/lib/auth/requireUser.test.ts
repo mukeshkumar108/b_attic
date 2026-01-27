@@ -39,7 +39,7 @@ describe("requireUser", () => {
   });
 
   it("authenticates via bearer token when present and valid", async () => {
-    vi.mocked(headers).mockReturnValue(
+    vi.mocked(headers).mockResolvedValue(
       new Headers({ Authorization: "Bearer test.jwt.token" }) as any
     );
     vi.mocked(verifyToken).mockResolvedValue({ sub: "user_bearer" } as any);
@@ -60,7 +60,7 @@ describe("requireUser", () => {
   });
 
   it("rejects invalid bearer token without falling back", async () => {
-    vi.mocked(headers).mockReturnValue(
+    vi.mocked(headers).mockResolvedValue(
       new Headers({ authorization: "Bearer bad.token" }) as any
     );
     vi.mocked(verifyToken).mockRejectedValue(new Error("invalid"));
@@ -73,7 +73,7 @@ describe("requireUser", () => {
   });
 
   it("falls back to cookie session when no bearer token", async () => {
-    vi.mocked(headers).mockReturnValue(new Headers() as any);
+    vi.mocked(headers).mockResolvedValue(new Headers() as any);
     vi.mocked(auth).mockResolvedValue({ userId: "user_cookie" } as any);
     vi.mocked(prisma.user.findUnique).mockResolvedValue({
       id: "db-user-2",
@@ -87,7 +87,7 @@ describe("requireUser", () => {
   });
 
   it("throws AuthError when unauthenticated", async () => {
-    vi.mocked(headers).mockReturnValue(new Headers() as any);
+    vi.mocked(headers).mockResolvedValue(new Headers() as any);
     vi.mocked(auth).mockResolvedValue({ userId: null } as any);
 
     await expect(requireUser()).rejects.toMatchObject<AuthError>({

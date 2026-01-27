@@ -52,8 +52,8 @@ export async function requireUser(): Promise<AuthenticatedUser> {
   return { user, clerkUserId };
 }
 
-function getBearerTokenFromHeaders(): string | null {
-  const requestHeaders = headers();
+async function getBearerTokenFromHeaders(): Promise<string | null> {
+  const requestHeaders = await headers();
   const authHeader =
     requestHeaders.get("authorization") ??
     requestHeaders.get("Authorization");
@@ -86,7 +86,7 @@ function parseAuthorizedParties(): string[] | undefined {
 }
 
 async function resolveClerkUserId(): Promise<string | null> {
-  const bearerToken = getBearerTokenFromHeaders();
+  const bearerToken = await getBearerTokenFromHeaders();
 
   if (bearerToken) {
     const jwtKey = process.env.CLERK_JWT_KEY;
