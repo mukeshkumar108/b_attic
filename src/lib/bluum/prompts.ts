@@ -13,196 +13,310 @@ export interface Prompt {
  * Curated prompts for gratitude reflection.
  * First tag is the "primary tag" used for rotation rules.
  */
-export const PROMPTS: Prompt[] = [
-  // People
+export const PROMPTS: Prompt[] = 
+[
   {
-    id: "p01",
-    text: "Who made you smile today, and what did they do?",
-    tags: ["people", "recent"],
+    "id": "d01",
+    "text": "Okay, easy one. What's something you ate recently that was actually good?",
+    "tags": ["low-demand", "sensory", "trust-building"]
   },
   {
-    id: "p02",
-    text: "Think of someone who helped you recently. What did their help mean to you?",
-    tags: ["people", "support"],
+    "id": "d02",
+    "text": "Think back. When's the last time you heard a sound that wasn't your phone?",
+    "tags": ["low-demand", "sensory", "grounding", "anti-rumination"]
   },
   {
-    id: "p03",
-    text: "Who in your life do you often take for granted? What do they bring to your life?",
-    tags: ["people", "awareness"],
+    "id": "d03",
+    "text": "When did you feel physically comfortable in the last day or so? (Doesn't have to be profound.)",
+    "tags": ["low-demand", "sensory", "trust-building"]
   },
   {
-    id: "p04",
-    text: "Describe a moment when someone showed you unexpected kindness.",
-    tags: ["people", "kindness"],
+    "id": "d04",
+    "text": "What's one thing you saw recently that looked… nice? (Low bar, I know.)",
+    "tags": ["low-demand", "observational", "trust-building"]
   },
   {
-    id: "p05",
-    text: "Who taught you something valuable? What was the lesson?",
-    tags: ["people", "growth"],
+    "id": "d05",
+    "text": "Any smells from the last few days stick out? Good or bad, doesn't matter.",
+    "tags": ["low-demand", "sensory", "variety"]
   },
+  {
+    "id": "d06",
+    "text": "What's the last thing you touched that had a texture you didn't hate?",
+    "tags": ["low-demand", "sensory", "grounding"]
+  },
+  {
+    "id": "d07",
+    "text": "When was the temperature just right recently? Rare, I know.",
+    "tags": ["low-demand", "sensory", "temporal"]
+  },
+  {
+    "id": "d08",
+    "text": "What's something you did recently just because you wanted to? No other reason.",
+    "tags": ["medium-demand", "personal", "variety"]
+  },
+  {
+    "id": "d09",
+    "text": "Look, I know this is weird, but—what did the sky look like yesterday?",
+    "tags": ["low-demand", "observational", "grounding"]
+  },
+  {
+    "id": "d10",
+    "text": "What's something you own that serves no purpose but you keep it anyway?",
+    "tags": ["medium-demand", "personal", "variety", "anti-rumination"]
+  },
+  {
+    "id": "d11",
+    "text": "When's the last time you had a stretch where no one needed anything from you?",
+    "tags": ["medium-demand", "personal", "temporal"]
+  },
+  {
+    "id": "d12",
+    "text": "Think of a moment this week where you had enough time for something. What was it?",
+    "tags": ["medium-demand", "personal", "temporal"]
+  },
+  {
+    "id": "d13",
+    "text": "Okay, real talk—when did something actually work the first try recently?",
+    "tags": ["low-demand", "personal", "variety"]
+  },
+  {
+    "id": "d14",
+    "text": "Pick one random second from yesterday. What were you looking at?",
+    "tags": ["medium-demand", "observational", "temporal", "high-specificity"]
+  },
+  {
+    "id": "d15",
+    "text": "What's something you looked at recently for absolutely no reason?",
+    "tags": ["medium-demand", "observational", "anti-rumination"]
+  },
+  {
+    "id": "d16",
+    "text": "Describe the light in whatever room you're in right now. (Or were in earlier. Whatever.)",
+    "tags": ["medium-demand", "sensory", "observational", "grounding"]
+  },
+  {
+    "id": "d17",
+    "text": "What annoying thing did NOT happen this week? (Wins are wins.)",
+    "tags": ["low-demand", "personal", "variety", "anti-rumination"]
+  },
+  {
+    "id": "d18",
+    "text": "When's the last time you just… stood somewhere? Doing nothing?",
+    "tags": ["medium-demand", "personal", "temporal", "grounding"]
+  },
+  {
+    "id": "d19",
+    "text": "What's one thing you noticed outside in the last day or two?",
+    "tags": ["low-demand", "observational", "grounding"]
+  },
+  {
+    "id": "d20",
+    "text": "Pick one bite of food from this week. What did the texture feel like?",
+    "tags": ["medium-demand", "sensory", "temporal", "high-specificity"]
+  },
+  {
+    "id": "d21",
+    "text": "Think of a recent moment where absolutely nothing was expected of you.",
+    "tags": ["medium-demand", "personal", "temporal", "anti-rumination"]
+  },
+  {
+    "id": "d22",
+    "text": "Okay, think back. When's the last time someone made you actually laugh? What happened?",
+    "tags": ["medium-demand", "social", "temporal"]
+  },
+  {
+    "id": "d23",
+    "text": "What did you drink this week that actually tasted like something?",
+    "tags": ["low-demand", "sensory", "temporal"]
+  },
+  {
+    "id": "d24",
+    "text": "When did the weather do something that wasn't terrible?",
+    "tags": ["low-demand", "observational", "temporal"]
+  },
+  {
+    "id": "d25",
+    "text": "What's something from this week you haven't told anyone about yet?",
+    "tags": ["medium-demand", "personal", "temporal", "variety"]
+  },
+  {
+    "id": "d26",
+    "text": "What's something you've been holding onto for no logical reason?",
+    "tags": ["medium-demand", "personal", "variety"]
+  },
+  {
+    "id": "d27",
+    "text": "When's the last time you said no to something and didn't feel bad about it?",
+    "tags": ["medium-demand", "personal", "temporal"]
+  },
+  {
+    "id": "d28",
+    "text": "Think of a place you walked through recently. What's one thing you remember seeing?",
+    "tags": ["medium-demand", "observational", "temporal", "high-specificity"]
+  },
+  {
+    "id": "d29",
+    "text": "What's the last completely pointless thing you did that felt fine?",
+    "tags": ["medium-demand", "personal", "anti-rumination"]
+  },
+  {
+    "id": "d30",
+    "text": "Pick a conversation from this week. What's one specific thing they said?",
+    "tags": ["high-specificity", "social", "temporal", "deepen"]
+  },
+  {
+    "id": "d31",
+    "text": "When did you feel like you had your shit together recently, even for a minute?",
+    "tags": ["medium-demand", "personal", "temporal"]
+  },
+  {
+    "id": "d32",
+    "text": "What sound have you been hearing a lot lately that you don't usually notice?",
+    "tags": ["medium-demand", "sensory", "observational"]
+  },
+  {
+    "id": "d33",
+    "text": "Think of someone who was just… easy to be around recently. Who?",
+    "tags": ["medium-demand", "social", "temporal"]
+  },
+  {
+    "id": "d34",
+    "text": "What's one thing from the last month you'd rewind to for just a second?",
+    "tags": ["medium-demand", "personal", "temporal", "deepen"]
+  },
+  {
+    "id": "d35",
+    "text": "When's the last time you were genuinely curious about something?",
+    "tags": ["medium-demand", "personal", "temporal"]
+  },
+  {
+    "id": "d36",
+    "text": "What did your hands do today that wasn't typing or scrolling?",
+    "tags": ["medium-demand", "sensory", "observational", "grounding"]
+  },
+  {
+    "id": "d37",
+    "text": "Think of the last time you were outside. What did the air feel like?",
+    "tags": ["medium-demand", "sensory", "temporal", "high-specificity"]
+  },
+  {
+    "id": "d38",
+    "text": "What minor disaster did you avoid this week without even trying?",
+    "tags": ["low-demand", "personal", "variety"]
+  },
+  {
+    "id": "d39",
+    "text": "When did you recently waste time in a way that felt perfectly fine?",
+    "tags": ["medium-demand", "personal", "temporal", "anti-rumination"]
+  },
+  {
+    "id": "d40",
+    "text": "What's the last thing someone texted you that didn't need a response?",
+    "tags": ["low-demand", "social", "temporal"]
+  },
+  {
+    "id": "d41",
+    "text": "Pick one moment from today. What time was it? What were you wearing?",
+    "tags": ["high-specificity", "temporal", "personal", "deepen"]
+  },
+  {
+    "id": "d42",
+    "text": "What's something that took less time than you expected recently?",
+    "tags": ["low-demand", "personal", "temporal"]
+  },
+  {
+    "id": "d43",
+    "text": "Think of a color you saw this week that stood out. Where was it?",
+    "tags": ["medium-demand", "observational", "temporal", "high-specificity"]
+  },
+  {
+    "id": "d44",
+    "text": "When's the last time your body felt good at something?",
+    "tags": ["medium-demand", "sensory", "personal", "temporal"]
+  },
+  {
+    "id": "d45",
+    "text": "What's the last thing someone did that they didn't have to do?",
+    "tags": ["medium-demand", "social", "temporal"]
+  },
+  {
+    "id": "d46",
+    "text": "Pick one thing you ate this week. Describe the first bite.",
+    "tags": ["high-specificity", "sensory", "temporal", "deepen"]
+  },
+  {
+    "id": "d47",
+    "text": "What's a routine thing you did recently that felt… different somehow?",
+    "tags": ["medium-demand", "personal", "observational", "variety"]
+  },
+  {
+    "id": "d48",
+    "text": "When did you feel relieved about something this week?",
+    "tags": ["medium-demand", "personal", "temporal"]
+  },
+  {
+    "id": "d49",
+    "text": "What's the last thing you stared at while thinking about nothing?",
+    "tags": ["medium-demand", "observational", "temporal", "anti-rumination"]
+  },
+  {
+    "id": "d50",
+    "text": "Think of a room you were in yesterday. What was the temperature like?",
+    "tags": ["high-specificity", "sensory", "temporal", "deepen"]
+  },
+  {
+    "id": "d51",
+    "text": "What made you forget about your phone for a minute recently?",
+    "tags": ["medium-demand", "personal", "temporal", "grounding"]
+  },
+  {
+    "id": "d52",
+    "text": "When's the last time you had a good coincidence or timing work out?",
+    "tags": ["low-demand", "personal", "temporal"]
+  },
+  {
+    "id": "d53",
+    "text": "What's one sound from this week you could still hear if you thought about it?",
+    "tags": ["high-specificity", "sensory", "temporal", "deepen"]
+  },
+  {
+    "id": "d54",
+    "text": "Think of someone who gets you. What do they get?",
+    "tags": ["medium-demand", "social", "deepen"]
+  },
+  {
+    "id": "d55",
+    "text": "What's the last thing you did slowly on purpose?",
+    "tags": ["medium-demand", "personal", "temporal", "grounding"]
+  },
+  {
+    "id": "d56",
+    "text": "Pick a small object near you right now. Describe what it feels like to touch.",
+    "tags": ["high-specificity", "sensory", "grounding", "deepen"]
+  },
+  {
+    "id": "d57",
+    "text": "When did something surprise you in a low-stakes, good way recently?",
+    "tags": ["medium-demand", "personal", "temporal", "variety"]
+  },
+  {
+    "id": "d58",
+    "text": "What's one thing you're looking forward to that isn't a big deal?",
+    "tags": ["low-demand", "personal", "anti-rumination"]
+  },
+  {
+    "id": "d59",
+    "text": "Think of the last time you laughed alone. What was funny?",
+    "tags": ["medium-demand", "personal", "temporal"]
+  },
+  {
+    "id": "d60",
+    "text": "What's one moment from this past month that you'd keep if you could?",
+    "tags": ["medium-demand", "personal", "temporal", "deepen"]
+  }
+]
 
-  // Moments
-  {
-    id: "m01",
-    text: "What small moment today brought you peace or joy?",
-    tags: ["moments", "recent"],
-  },
-  {
-    id: "m02",
-    text: "Describe a moment this week when you felt truly present.",
-    tags: ["moments", "mindfulness"],
-  },
-  {
-    id: "m03",
-    text: "What unexpected thing happened recently that turned out well?",
-    tags: ["moments", "surprise"],
-  },
-  {
-    id: "m04",
-    text: "What simple pleasure did you enjoy today?",
-    tags: ["moments", "simple"],
-  },
-  {
-    id: "m05",
-    text: "Recall a recent moment of laughter. What made it funny?",
-    tags: ["moments", "joy"],
-  },
-
-  // Self
-  {
-    id: "s01",
-    text: "What's something you did well today, even if small?",
-    tags: ["self", "accomplishment"],
-  },
-  {
-    id: "s02",
-    text: "What personal quality helped you through a challenge recently?",
-    tags: ["self", "strength"],
-  },
-  {
-    id: "s03",
-    text: "What did you learn about yourself this week?",
-    tags: ["self", "growth"],
-  },
-  {
-    id: "s04",
-    text: "How did you take care of yourself today?",
-    tags: ["self", "care"],
-  },
-  {
-    id: "s05",
-    text: "What boundary did you set or maintain that you're grateful for?",
-    tags: ["self", "boundaries"],
-  },
-
-  // Nature/Environment
-  {
-    id: "n01",
-    text: "What in nature caught your attention recently?",
-    tags: ["nature", "observation"],
-  },
-  {
-    id: "n02",
-    text: "Describe a place that brought you comfort or peace.",
-    tags: ["nature", "place"],
-  },
-  {
-    id: "n03",
-    text: "What aspect of the weather or season are you appreciating?",
-    tags: ["nature", "seasons"],
-  },
-  {
-    id: "n04",
-    text: "What sound, smell, or sight in your environment do you enjoy?",
-    tags: ["nature", "senses"],
-  },
-  {
-    id: "n05",
-    text: "How has being outdoors or near nature affected your mood recently?",
-    tags: ["nature", "wellbeing"],
-  },
-
-  // Daily life
-  {
-    id: "d01",
-    text: "What everyday convenience are you grateful for today?",
-    tags: ["daily", "convenience"],
-  },
-  {
-    id: "d02",
-    text: "What part of your morning routine do you actually enjoy?",
-    tags: ["daily", "routine"],
-  },
-  {
-    id: "d03",
-    text: "What meal or drink did you really appreciate recently?",
-    tags: ["daily", "food"],
-  },
-  {
-    id: "d04",
-    text: "What tool or object made your day easier?",
-    tags: ["daily", "tools"],
-  },
-  {
-    id: "d05",
-    text: "What aspect of your home brings you comfort?",
-    tags: ["daily", "home"],
-  },
-
-  // Growth/Learning
-  {
-    id: "g01",
-    text: "What mistake taught you something valuable?",
-    tags: ["growth", "learning"],
-  },
-  {
-    id: "g02",
-    text: "What challenge helped you grow stronger?",
-    tags: ["growth", "challenge"],
-  },
-  {
-    id: "g03",
-    text: "What new skill or knowledge are you developing that excites you?",
-    tags: ["growth", "skills"],
-  },
-  {
-    id: "g04",
-    text: "When did you step out of your comfort zone recently? What did you gain?",
-    tags: ["growth", "courage"],
-  },
-  {
-    id: "g05",
-    text: "What feedback or advice improved something in your life?",
-    tags: ["growth", "feedback"],
-  },
-
-  // Past/Memory
-  {
-    id: "r01",
-    text: "What happy memory surfaced recently that made you smile?",
-    tags: ["memory", "past"],
-  },
-  {
-    id: "r02",
-    text: "What past experience are you grateful shaped who you are?",
-    tags: ["memory", "identity"],
-  },
-  {
-    id: "r03",
-    text: "Who from your past do you feel grateful to have known?",
-    tags: ["memory", "people"],
-  },
-  {
-    id: "r04",
-    text: "What difficult time in your past are you now grateful you went through?",
-    tags: ["memory", "resilience"],
-  },
-  {
-    id: "r05",
-    text: "What tradition or memory from childhood do you still value?",
-    tags: ["memory", "childhood"],
-  },
-];
 
 /**
  * Get a prompt by ID.
