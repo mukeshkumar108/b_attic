@@ -7,6 +7,7 @@ import { startVoiceSession } from "@/lib/voice/service";
 
 const startSchema = z.object({
   flow: z.enum(["onboarding", "first_reflection"]),
+  reflectionTrack: z.enum(["day0", "core"]).optional().nullable(),
   clientSessionId: z.string().min(1),
   dateLocal: z.string().optional().nullable(),
   locale: z.string().optional().nullable(),
@@ -30,6 +31,7 @@ export async function POST(request: NextRequest) {
     const result = await startVoiceSession({
       user,
       flow: parsed.data.flow,
+      reflectionTrack: parsed.data.reflectionTrack,
       clientSessionId: parsed.data.clientSessionId,
       dateLocal: parsed.data.dateLocal,
       locale: parsed.data.locale,

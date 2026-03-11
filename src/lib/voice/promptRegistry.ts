@@ -18,11 +18,22 @@ const FIRST_REFLECTION_DAY0_V1: VoicePromptBinding = {
   templatePath: "src/lib/llm/prompts/voice_first_reflection_day0_v1.md",
 };
 
+const FIRST_REFLECTION_CORE_V1: VoicePromptBinding = {
+  key: "voice_reflection_core",
+  version: "v1",
+  templatePath: "src/lib/llm/prompts/voice_reflection_core_v1.md",
+};
+
 const ONBOARDING_PROMPT_MAP: Record<string, VoicePromptBinding> = {
   [`${ONBOARDING_WELCOME_V4.key}:${ONBOARDING_WELCOME_V4.version}`]:
     ONBOARDING_WELCOME_V4,
+};
+
+const FIRST_REFLECTION_PROMPT_MAP: Record<string, VoicePromptBinding> = {
   [`${FIRST_REFLECTION_DAY0_V1.key}:${FIRST_REFLECTION_DAY0_V1.version}`]:
     FIRST_REFLECTION_DAY0_V1,
+  [`${FIRST_REFLECTION_CORE_V1.key}:${FIRST_REFLECTION_CORE_V1.version}`]:
+    FIRST_REFLECTION_CORE_V1,
 };
 
 export function getDefaultVoicePromptBinding(
@@ -35,6 +46,15 @@ export function getDefaultVoicePromptBinding(
     return FIRST_REFLECTION_DAY0_V1;
   }
   return null;
+}
+
+export function getFirstReflectionPromptBindingFromTrack(
+  track: "day0" | "core" | null | undefined
+): VoicePromptBinding {
+  if (track === "core") {
+    return FIRST_REFLECTION_CORE_V1;
+  }
+  return FIRST_REFLECTION_DAY0_V1;
 }
 
 /**
@@ -77,12 +97,13 @@ export function resolveFirstReflectionPromptBinding(params: {
     return FIRST_REFLECTION_DAY0_V1;
   }
 
-  const resolved = ONBOARDING_PROMPT_MAP[`${promptKey}:${promptVersion}`];
-  if (!resolved) {
+  const firstReflectionResolved =
+    FIRST_REFLECTION_PROMPT_MAP[`${promptKey}:${promptVersion}`];
+  if (!firstReflectionResolved) {
     throw new Error(
       `Unsupported first_reflection prompt binding: ${promptKey}:${promptVersion}`
     );
   }
 
-  return resolved;
+  return firstReflectionResolved;
 }

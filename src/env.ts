@@ -20,6 +20,7 @@ const envSchema = z
     OPENROUTER_MODEL: z.string().optional(),
     OPENROUTER_ONBOARDING_MODEL: z.string().optional(),
     OPENROUTER_REFLECTION_MODEL: z.string().optional(),
+    OPENROUTER_REFLECTION_ONGOING_MODEL: z.string().optional(),
     OPENROUTER_FIRST_REFLECTION_DAY0_MODEL: z.string().optional(),
     OPENROUTER_FIRST_REFLECTION_DAY1_3_MODEL: z.string().optional(),
     // Voice providers (optional - required only for voice session endpoints)
@@ -39,6 +40,8 @@ const envSchema = z
     VOICE_ONBOARDING_HANDSHAKE_MIME: z.string().optional(),
     VOICE_FIRST_REFLECTION_DAY0_HANDSHAKE_URL: z.string().url().optional(),
     VOICE_FIRST_REFLECTION_DAY0_HANDSHAKE_MIME: z.string().optional(),
+    VOICE_REFLECTION_CORE_HANDSHAKE_URL: z.string().url().optional(),
+    VOICE_REFLECTION_CORE_HANDSHAKE_MIME: z.string().optional(),
     VOICE_TEST_API_KEY: z.string().min(1).optional(),
     VOICE_TEST_USER_ID: z.string().min(1).optional(),
     OPENROUTER_FIRST_REFLECTION_MODEL: z.string().optional(), // legacy fallback key

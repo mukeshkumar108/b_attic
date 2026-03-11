@@ -26,7 +26,12 @@ import {
   runFirstReflectionDay0Turn,
 } from "@/lib/voice/firstReflectionDay0Flow";
 import {
+  REFLECTION_CORE_HANDSHAKE_TEXT,
+  runReflectionCoreTurn,
+} from "@/lib/voice/reflectionCoreFlow";
+import {
   getDefaultVoicePromptBinding,
+  getFirstReflectionPromptBindingFromTrack,
   resolveFirstReflectionPromptBinding,
   resolveOnboardingPromptBinding,
   type VoicePromptBinding,
@@ -36,6 +41,7 @@ import { transcribeWithLemonfox } from "@/lib/voice/providers/lemonfox";
 import { loadPromptMdStrict } from "@/lib/llm/openrouter";
 
 export type VoiceFlowInput = "onboarding" | "first_reflection";
+export type ReflectionTrackInput = "day0" | "core";
 
 interface AssistantPayload {
   text: string;
@@ -254,6 +260,34 @@ function getFirstReflectionDay0StartAudioFromEnv(): AudioPayloadLike | null {
   };
 }
 
+function getReflectionCoreStartAudioFromEnv(): AudioPayloadLike | null {
+  const audioUrl = process.env.VOICE_REFLECTION_CORE_HANDSHAKE_URL?.trim();
+  if (!audioUrl) {
+    return null;
+  }
+
+  const sharedMime = process.env.VOICE_HANDSHAKE_MIME?.trim();
+
+  return {
+    audioUrl,
+    audioMimeType:
+      process.env.VOICE_REFLECTION_CORE_HANDSHAKE_MIME?.trim() ||
+      sharedMime ||
+      "audio/mpeg",
+    audioExpiresAt: null,
+    ttsAvailable: true,
+  };
+}
+
+function getFirstReflectionTrackFromPromptKey(
+  promptKey: string | null
+): ReflectionTrackInput {
+  if (promptKey === "voice_reflection_core") {
+    return "core";
+  }
+  return "day0";
+}
+
 function toJsonInput(value: unknown): Prisma.InputJsonValue {
   return value as Prisma.InputJsonValue;
 }
@@ -302,6 +336,7 @@ async function ensureSessionActive(session: VoiceSession): Promise<VoiceSession>
 export async function startVoiceSession(params: {
   user: User;
   flow: VoiceFlowInput;
+  reflectionTrack?: ReflectionTrackInput | null;
   clientSessionId: string;
   dateLocal?: string | null;
   locale?: string | null;
@@ -309,6 +344,7 @@ export async function startVoiceSession(params: {
 }): Promise<{ status: number; body: unknown }> {
   const normalized = {
     flow: params.flow,
+    reflectionTrack: params.reflectionTrack ?? null,
     dateLocal: params.dateLocal ?? null,
     locale: params.locale ?? null,
     ttsVoiceId: params.ttsVoiceId ?? null,
@@ -374,15 +410,9 @@ export async function startVoiceSession(params: {
       );
     }
     await getOrCreateDailyStatus(params.user.id, dateLocal);
-    const reflectionPromptBinding = getDefaultVoicePromptBinding(dbFlow);
-    if (!reflectionPromptBinding) {
-      throw new VoiceServiceError(
-        "internal_error",
-        500,
-        true,
-        "First reflection prompt is not configured."
-      );
-    }
+    const reflectionPromptBinding = getFirstReflectionPromptBindingFromTrack(
+      params.reflectionTrack
+    );
 
     loadPromptMdStrict(reflectionPromptBinding.templatePath);
     promptId = reflectionPromptBinding.key;
@@ -422,9 +452,12 @@ export async function startVoiceSession(params: {
     },
   });
 
+  const reflectionTrack = getFirstReflectionTrackFromPromptKey(promptId);
   const assistantText =
     dbFlow === "FIRST_REFLECTION"
-      ? FIRST_REFLECTION_DAY0_HANDSHAKE_TEXT
+      ? reflectionTrack === "core"
+        ? REFLECTION_CORE_HANDSHAKE_TEXT
+        : FIRST_REFLECTION_DAY0_HANDSHAKE_TEXT
       : getOnboardingWelcomeText(draft ?? {});
 
   let tts: AudioPayloadLike;
@@ -437,13 +470,19 @@ export async function startVoiceSession(params: {
         blobPath: `voice/${params.user.id}/${session.id}/start.mp3`,
       }));
   } else if (dbFlow === "FIRST_REFLECTION") {
-    tts =
-      getFirstReflectionDay0StartAudioFromEnv() ??
-      (await synthesizeWithElevenlabs({
-        text: assistantText,
-        voiceId: params.ttsVoiceId ?? null,
-        blobPath: `voice/${params.user.id}/${session.id}/start.mp3`,
-      }));
+    tts = reflectionTrack === "core"
+      ? getReflectionCoreStartAudioFromEnv() ??
+        (await synthesizeWithElevenlabs({
+          text: assistantText,
+          voiceId: params.ttsVoiceId ?? null,
+          blobPath: `voice/${params.user.id}/${session.id}/start.mp3`,
+        }))
+      : getFirstReflectionDay0StartAudioFromEnv() ??
+        (await synthesizeWithElevenlabs({
+          text: assistantText,
+          voiceId: params.ttsVoiceId ?? null,
+          blobPath: `voice/${params.user.id}/${session.id}/start.mp3`,
+        }));
   } else {
     tts = await synthesizeWithElevenlabs({
       text: assistantText,
@@ -456,6 +495,7 @@ export async function startVoiceSession(params: {
     session: {
       id: session.id,
       flow: toApiFlow(session.flow),
+      reflectionTrack: dbFlow === "FIRST_REFLECTION" ? reflectionTrack : null,
       state: "active",
       dateLocal,
       expiresAt: session.expiresAt.toISOString(),
@@ -634,16 +674,31 @@ async function computeAssistantTurn(params: {
     }));
 
   const llmStartedAt = Date.now();
-  const firstReflectionResult = await runFirstReflectionDay0Turn({
-    transcript: params.transcript,
-    promptTemplatePath: firstReflectionPromptBinding.templatePath,
-    history,
-    profile: {
-      name: params.user.displayName ?? null,
-      ageRange: "unknown",
-      sex: "unknown",
-    },
-  });
+  const reflectionTrack = getFirstReflectionTrackFromPromptKey(
+    firstReflectionPromptBinding.key
+  );
+  const firstReflectionResult =
+    reflectionTrack === "core"
+      ? await runReflectionCoreTurn({
+          transcript: params.transcript,
+          promptTemplatePath: firstReflectionPromptBinding.templatePath,
+          history,
+          profile: {
+            name: params.user.displayName ?? null,
+            ageRange: "unknown",
+            sex: "unknown",
+          },
+        })
+      : await runFirstReflectionDay0Turn({
+          transcript: params.transcript,
+          promptTemplatePath: firstReflectionPromptBinding.templatePath,
+          history,
+          profile: {
+            name: params.user.displayName ?? null,
+            ageRange: "unknown",
+            sex: "unknown",
+          },
+        });
   llmLatencyMs = Date.now() - llmStartedAt;
 
   if (firstReflectionResult.safetyFlag) {

@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   getDefaultVoicePromptBinding,
+  getFirstReflectionPromptBindingFromTrack,
   resolveFirstReflectionPromptBinding,
   resolveOnboardingPromptBinding,
 } from "@/lib/voice/promptRegistry";
@@ -51,5 +52,14 @@ describe("voice prompt registry", () => {
     expect(binding.templatePath).toBe(
       "src/lib/llm/prompts/voice_first_reflection_day0_v1.md"
     );
+  });
+
+  it("resolves first_reflection core track binding", () => {
+    const binding = getFirstReflectionPromptBindingFromTrack("core");
+    expect(binding).toEqual({
+      key: "voice_reflection_core",
+      version: "v1",
+      templatePath: "src/lib/llm/prompts/voice_reflection_core_v1.md",
+    });
   });
 });

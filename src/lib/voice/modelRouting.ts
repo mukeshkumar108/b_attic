@@ -29,6 +29,7 @@ export function getFirstReflectionDay0ModelChain(): string[] {
 
 export function getFirstReflectionDay1To3ModelChain(): string[] {
   return uniqueModels([
+    process.env.OPENROUTER_REFLECTION_ONGOING_MODEL,
     process.env.OPENROUTER_FIRST_REFLECTION_DAY1_3_MODEL,
     process.env.OPENROUTER_REFLECTION_MODEL,
     process.env.OPENROUTER_MODEL,

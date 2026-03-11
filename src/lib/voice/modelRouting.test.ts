@@ -50,4 +50,22 @@ describe("voice model routing", () => {
       "xiaomi/mimo-v2-flash",
     ]);
   });
+
+  it("prefers reflection ongoing model when set", () => {
+    vi.stubEnv(
+      "OPENROUTER_REFLECTION_ONGOING_MODEL",
+      "google/gemini-2.5-flash"
+    );
+    vi.stubEnv(
+      "OPENROUTER_FIRST_REFLECTION_DAY1_3_MODEL",
+      "google/gemini-2.5-pro"
+    );
+    vi.stubEnv("OPENROUTER_REFLECTION_MODEL", "xiaomi/mimo-v2-flash");
+
+    expect(getFirstReflectionDay1To3ModelChain()).toEqual([
+      "google/gemini-2.5-flash",
+      "google/gemini-2.5-pro",
+      "xiaomi/mimo-v2-flash",
+    ]);
+  });
 });
