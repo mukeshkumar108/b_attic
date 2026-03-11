@@ -1,7 +1,7 @@
 # Bluum Voice API Contract (MVP)
 
 Status: Draft for backend + React Native integration
-Last updated: 2026-03-10
+Last updated: 2026-03-11
 
 This document defines the canonical contract for turn-based push-to-talk voice flow:
 
@@ -46,6 +46,8 @@ Base URL: `http://localhost:3000/api/bluum/voice/session`
 - Audio URL validity for all assistant responses: minimum `10 minutes` from response timestamp (`audioExpiresAt`)
 - If `/turn` returns `ttsAvailable=false`, the turn is still successful (`200`) and the session continues normally
 - For `first_reflection`, `/end` with `commit=false` ends the session without writing `DailyReflection` and without mutating streak state
+- Recommended default client behavior for `/turn`: staged flow (`responseMode=staged` then `responseMode=finalize`) for lower perceived latency
+- Compatibility fallback remains available: single-call `responseMode=final` (or omitted `responseMode`)
 
 ## Endpoints
 
@@ -112,14 +114,15 @@ Content-Type:
 Multipart field spec:
 - `sessionId` (string, required)
 - `clientTurnId` (string UUID, required, idempotency key)
-- `audio` (file, required)
+- `audio` (file, required for `responseMode=final|staged`; omitted for `responseMode=finalize`)
+- `responseMode` (string, optional, enum: `final | staged | finalize`, default: `final`)
 - `audioDurationMs` (number, optional)
 - `locale` (string, optional)
 - `deviceTs` (string ISO-8601, optional)
 
 Audio constraints (MVP):
 - max file size: `2 MB`
-- max duration: `20,000 ms` (20 seconds)
+- max duration: `90,000 ms` (90 seconds)
 - accepted MIME types:
 - `audio/mp4`
 - `audio/x-m4a`
@@ -127,7 +130,7 @@ Audio constraints (MVP):
 - `audio/wav`
 - `audio/webm`
 
-Success response (`200`):
+Success response (`200`) for `responseMode=final`:
 
 ```json
 {
@@ -161,6 +164,42 @@ Success response (`200`):
   }
 }
 ```
+
+Success response (`200`) for `responseMode=staged` (pending shape):
+
+```json
+{
+  "session": {
+    "id": "vsn_123",
+    "state": "active",
+    "readyToEnd": false,
+    "safetyFlagged": false,
+    "nextTurnIndex": 2,
+    "expiresAt": "2026-03-10T10:25:00.000Z"
+  },
+  "turn": {
+    "id": "vturn_456",
+    "index": 1,
+    "clientTurnId": "8c80f6b5-4e48-4ed2-922c-3f5f24b563f4",
+    "userTranscript": {
+      "text": "I am grateful for my sister calling me today."
+    },
+    "assistantPending": true
+  }
+}
+```
+
+Pending-shape guarantees:
+- `turn.userTranscript.text` is always present
+- `turn.assistantPending` is always `true`
+- `turn.assistant` is omitted in pending response
+
+Finalize call contract:
+- Use same endpoint: `POST /turn` with `multipart/form-data`
+- Use same `sessionId` and same `clientTurnId` from prior staged call
+- Set `responseMode=finalize`
+- Do not include `audio` field
+- On success (`200`), response payload matches the normal final turn payload shape
 
 `assistant` audio schema (exact, all turn/start success responses):
 - `text`: `string` (required)
@@ -317,6 +356,9 @@ Recommended error codes:
 - `stt_provider_error` (`503`, retryable true)
 - `llm_provider_error` (`503`, retryable true)
 - `tts_provider_error` (`503`, retryable true)
+- `turn_not_found` (`404`, retryable false)
+- `turn_pending_finalize` (`409`, retryable false)
+- `turn_finalize_in_progress` (`409`, retryable true)
 - `session_not_found` (`404`, retryable false)
 - `session_expired` (`409`, retryable false)
 - `session_inactive` (`409`, retryable false)
@@ -389,12 +431,17 @@ Recommended error codes:
 ## Frontend behavior checklist (React Native)
 
 - Start once with `/start`, then keep using returned `session.id`
-- For each push-to-talk clip, send one `/turn`
+- For each push-to-talk clip, default to staged sequence:
+- first call `/turn` with `responseMode=staged` + audio
+- render `turn.userTranscript.text` immediately when `assistantPending=true`
+- then call `/turn` with same `sessionId + clientTurnId` and `responseMode=finalize` (no audio)
 - Always branch on `readyToEnd`
 - If `readyToEnd=true`, call `/end`
 - If `stt_unintelligible`, prompt re-record in same session
 - If `session_expired`, start a new session
 - If safety flagged, show `safeResponse` resources immediately and end flow
+- If `turn_finalize_in_progress`, retry finalize with short backoff
+- Compatibility fallback: client may use `responseMode=final` if staged path is unavailable
 
 ## V2 deferrals (not MVP)
 
