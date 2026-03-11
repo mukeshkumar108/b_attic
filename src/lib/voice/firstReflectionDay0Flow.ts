@@ -1,9 +1,10 @@
 import { z } from "zod";
 import {
-  callOpenRouterWithOptions,
+  callOpenRouterWithModelFallback,
   loadPromptMdStrict,
   parseJsonWithZod,
 } from "@/lib/llm/openrouter";
+import { getFirstReflectionDay0ModelChain } from "@/lib/voice/modelRouting";
 
 const FirstReflectionLLMStateSchema = z.object({
   session_complete: z.boolean(),
@@ -107,8 +108,9 @@ export async function runFirstReflectionDay0Turn(params: {
   const prompt = `${corePrompt}\n${runtimeContext}`;
 
   try {
-    const raw = await callOpenRouterWithOptions(prompt, {
-      model: process.env.OPENROUTER_FIRST_REFLECTION_MODEL,
+    const raw = await callOpenRouterWithModelFallback(prompt, {
+      modelChain: getFirstReflectionDay0ModelChain(),
+      contextLabel: "voice_first_reflection_day0",
       temperature: 0.4,
       maxTokens: 700,
     });

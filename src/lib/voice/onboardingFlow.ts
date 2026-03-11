@@ -1,9 +1,10 @@
 import { z } from "zod";
 import {
-  callOpenRouterWithOptions,
+  callOpenRouterWithModelFallback,
   loadPromptMdStrict,
   parseJsonWithZod,
 } from "@/lib/llm/openrouter";
+import { getOnboardingModelChain } from "@/lib/voice/modelRouting";
 
 const TIMEZONE_REGEX = /^[A-Za-z_]+\/[A-Za-z_]+$/;
 const TIME_LOCAL_REGEX = /^\d{2}:\d{2}$/;
@@ -204,8 +205,9 @@ async function tryLLMOnboarding(params: {
   const prompt = `${corePrompt}\n${runtimeContext}`;
 
   try {
-    const raw = await callOpenRouterWithOptions(prompt, {
-      model: process.env.OPENROUTER_ONBOARDING_MODEL,
+    const raw = await callOpenRouterWithModelFallback(prompt, {
+      modelChain: getOnboardingModelChain(),
+      contextLabel: "voice_onboarding",
       temperature: 0.4,
       maxTokens: 700,
     });

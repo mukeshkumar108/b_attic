@@ -10,6 +10,21 @@ import path from "path";
 const OPENROUTER_API_URL = "https://openrouter.ai/api/v1/chat/completions";
 const DEFAULT_MODEL = "anthropic/claude-3-haiku-20240307";
 
+function isRetryableOpenRouterStatus(status: number): boolean {
+  return status === 408 || status === 429 || (status >= 500 && status <= 599);
+}
+
+export class OpenRouterRequestError extends Error {
+  constructor(
+    message: string,
+    public status: number | null,
+    public retryable: boolean
+  ) {
+    super(message);
+    this.name = "OpenRouterRequestError";
+  }
+}
+
 const EMBEDDED_PROMPTS: Record<string, string> = {
   "src/lib/llm/prompts/safety_gate.md": `# Safety Gate
 
@@ -369,7 +384,11 @@ export async function callOpenRouter(prompt: string): Promise<string> {
 
   if (!response.ok) {
     const errorText = await response.text();
-    throw new Error(`OpenRouter API error: ${response.status} ${errorText}`);
+    throw new OpenRouterRequestError(
+      `OpenRouter API error: ${response.status} ${errorText}`,
+      response.status,
+      isRetryableOpenRouterStatus(response.status)
+    );
   }
 
   const data = await response.json();
@@ -402,30 +421,43 @@ export async function callOpenRouterWithOptions(
   const temperature = options?.temperature ?? 0.3;
   const maxTokens = options?.maxTokens ?? 500;
 
-  const response = await fetch(OPENROUTER_API_URL, {
-    method: "POST",
-    headers: {
-      Authorization: `Bearer ${apiKey}`,
-      "Content-Type": "application/json",
-      "HTTP-Referer": process.env.NEXT_PUBLIC_APP_URL || "https://bluum.app",
-      "X-Title": "Bluum",
-    },
-    body: JSON.stringify({
-      model,
-      messages: [
-        {
-          role: "user",
-          content: prompt,
-        },
-      ],
-      temperature,
-      max_tokens: maxTokens,
-    }),
-  });
+  let response: Response;
+  try {
+    response = await fetch(OPENROUTER_API_URL, {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${apiKey}`,
+        "Content-Type": "application/json",
+        "HTTP-Referer": process.env.NEXT_PUBLIC_APP_URL || "https://bluum.app",
+        "X-Title": "Bluum",
+      },
+      body: JSON.stringify({
+        model,
+        messages: [
+          {
+            role: "user",
+            content: prompt,
+          },
+        ],
+        temperature,
+        max_tokens: maxTokens,
+      }),
+    });
+  } catch (err) {
+    throw new OpenRouterRequestError(
+      `OpenRouter network error: ${String(err)}`,
+      null,
+      true
+    );
+  }
 
   if (!response.ok) {
     const errorText = await response.text();
-    throw new Error(`OpenRouter API error: ${response.status} ${errorText}`);
+    throw new OpenRouterRequestError(
+      `OpenRouter API error: ${response.status} ${errorText}`,
+      response.status,
+      isRetryableOpenRouterStatus(response.status)
+    );
   }
 
   const data = await response.json();
@@ -436,6 +468,48 @@ export async function callOpenRouterWithOptions(
   }
 
   return content.trim();
+}
+
+export async function callOpenRouterWithModelFallback(
+  prompt: string,
+  options: OpenRouterCallOptions & { modelChain: string[]; contextLabel: string }
+): Promise<string> {
+  const models = Array.from(
+    new Set(
+      options.modelChain
+        .map((model) => model.trim())
+        .filter((model) => model.length > 0)
+    )
+  );
+
+  if (!models.length) {
+    return callOpenRouterWithOptions(prompt, options);
+  }
+
+  let lastErr: unknown;
+  for (let i = 0; i < models.length; i += 1) {
+    const model = models[i];
+    const isLast = i === models.length - 1;
+    try {
+      return await callOpenRouterWithOptions(prompt, {
+        model,
+        temperature: options.temperature,
+        maxTokens: options.maxTokens,
+      });
+    } catch (err) {
+      lastErr = err;
+      const retryable =
+        err instanceof OpenRouterRequestError ? err.retryable : true;
+      if (!retryable || isLast) {
+        throw err;
+      }
+      console.warn(
+        `[openrouter] ${options.contextLabel} fallback from ${model} to ${models[i + 1]}`
+      );
+    }
+  }
+
+  throw lastErr ?? new Error("Model fallback failed");
 }
 
 /**

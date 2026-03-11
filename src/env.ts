@@ -19,6 +19,9 @@ const envSchema = z
     OPENROUTER_API_KEY: z.string().min(1).optional(),
     OPENROUTER_MODEL: z.string().optional(),
     OPENROUTER_ONBOARDING_MODEL: z.string().optional(),
+    OPENROUTER_REFLECTION_MODEL: z.string().optional(),
+    OPENROUTER_FIRST_REFLECTION_DAY0_MODEL: z.string().optional(),
+    OPENROUTER_FIRST_REFLECTION_DAY1_3_MODEL: z.string().optional(),
     // Voice providers (optional - required only for voice session endpoints)
     LEMONFOX_API_KEY: z.string().min(1).optional(),
     LEMONFOX_API_URL: z.string().url().optional(),
@@ -38,7 +41,7 @@ const envSchema = z
     VOICE_FIRST_REFLECTION_DAY0_HANDSHAKE_MIME: z.string().optional(),
     VOICE_TEST_API_KEY: z.string().min(1).optional(),
     VOICE_TEST_USER_ID: z.string().min(1).optional(),
-    OPENROUTER_FIRST_REFLECTION_MODEL: z.string().optional(),
+    OPENROUTER_FIRST_REFLECTION_MODEL: z.string().optional(), // legacy fallback key
   })
   .superRefine((value, ctx) => {
     if (value.NODE_ENV === "production") {
