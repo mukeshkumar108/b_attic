@@ -351,8 +351,14 @@ export async function startVoiceSession(params: {
   locale?: string | null;
   ttsVoiceId?: string | null;
 }): Promise<{ status: number; body: unknown }> {
+  const firstReflectionPersistenceEnabled =
+    process.env.VOICE_FIRST_REFLECTION_PERSISTENCE === "true";
   const resolvedPracticeMode =
-    params.flow === "first_reflection" ? params.practiceMode !== false : false;
+    params.flow === "first_reflection"
+      ? firstReflectionPersistenceEnabled
+        ? params.practiceMode !== false
+        : true
+      : false;
 
   const normalized = {
     flow: params.flow,

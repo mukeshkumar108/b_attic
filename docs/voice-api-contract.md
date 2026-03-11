@@ -75,6 +75,7 @@ Fields:
 - `practiceMode` optional boolean
 - `practiceMode` default behavior for `first_reflection`: `true` unless explicitly set to `false`
 - `practiceMode=true` behavior: allows repeat test sessions without `reflection_exists` blocking and disables reflection persistence on `/end`
+- Current backend test default: `first_reflection` voice persistence is disabled unless `VOICE_FIRST_REFLECTION_PERSISTENCE=true`; in this default, sessions run as practice mode regardless of requested `practiceMode`
 - `clientSessionId` required (UUID, idempotency key)
 - `dateLocal` optional (`YYYY-MM-DD`, mainly for `first_reflection`)
 - `locale` optional
