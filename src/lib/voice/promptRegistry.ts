@@ -12,9 +12,17 @@ const ONBOARDING_WELCOME_V4: VoicePromptBinding = {
   templatePath: "src/lib/llm/prompts/voice_onboarding_welcome_v4.md",
 };
 
+const FIRST_REFLECTION_DAY0_V1: VoicePromptBinding = {
+  key: "voice_first_reflection_day0",
+  version: "v1",
+  templatePath: "src/lib/llm/prompts/voice_first_reflection_day0_v1.md",
+};
+
 const ONBOARDING_PROMPT_MAP: Record<string, VoicePromptBinding> = {
   [`${ONBOARDING_WELCOME_V4.key}:${ONBOARDING_WELCOME_V4.version}`]:
     ONBOARDING_WELCOME_V4,
+  [`${FIRST_REFLECTION_DAY0_V1.key}:${FIRST_REFLECTION_DAY0_V1.version}`]:
+    FIRST_REFLECTION_DAY0_V1,
 };
 
 export function getDefaultVoicePromptBinding(
@@ -22,6 +30,9 @@ export function getDefaultVoicePromptBinding(
 ): VoicePromptBinding | null {
   if (flow === "ONBOARDING") {
     return ONBOARDING_WELCOME_V4;
+  }
+  if (flow === "FIRST_REFLECTION") {
+    return FIRST_REFLECTION_DAY0_V1;
   }
   return null;
 }
@@ -45,6 +56,31 @@ export function resolveOnboardingPromptBinding(params: {
   if (!resolved) {
     throw new Error(
       `Unsupported onboarding prompt binding: ${promptKey}:${promptVersion}`
+    );
+  }
+
+  return resolved;
+}
+
+/**
+ * Resolve first_reflection prompt from session-locked key/version.
+ * For legacy sessions without key/version, fall back to current default.
+ */
+export function resolveFirstReflectionPromptBinding(params: {
+  promptKey: string | null;
+  promptVersion: string | null;
+}): VoicePromptBinding {
+  const promptKey = params.promptKey?.trim() ?? "";
+  const promptVersion = params.promptVersion?.trim() ?? "";
+
+  if (!promptKey || !promptVersion) {
+    return FIRST_REFLECTION_DAY0_V1;
+  }
+
+  const resolved = ONBOARDING_PROMPT_MAP[`${promptKey}:${promptVersion}`];
+  if (!resolved) {
+    throw new Error(
+      `Unsupported first_reflection prompt binding: ${promptKey}:${promptVersion}`
     );
   }
 

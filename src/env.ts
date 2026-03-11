@@ -31,10 +31,14 @@ const envSchema = z
     VOICE_TTS_AUDIO_URL_TTL_SECONDS: z.coerce.number().int().positive().optional(),
     VOICE_MAX_AUDIO_BYTES: z.coerce.number().int().positive().optional(),
     VOICE_MAX_AUDIO_MS: z.coerce.number().int().positive().optional(),
+    VOICE_HANDSHAKE_MIME: z.string().optional(),
     VOICE_ONBOARDING_HANDSHAKE_URL: z.string().url().optional(),
     VOICE_ONBOARDING_HANDSHAKE_MIME: z.string().optional(),
+    VOICE_FIRST_REFLECTION_DAY0_HANDSHAKE_URL: z.string().url().optional(),
+    VOICE_FIRST_REFLECTION_DAY0_HANDSHAKE_MIME: z.string().optional(),
     VOICE_TEST_API_KEY: z.string().min(1).optional(),
     VOICE_TEST_USER_ID: z.string().min(1).optional(),
+    OPENROUTER_FIRST_REFLECTION_MODEL: z.string().optional(),
   })
   .superRefine((value, ctx) => {
     if (value.NODE_ENV === "production") {

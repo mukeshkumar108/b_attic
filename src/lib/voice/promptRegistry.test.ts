@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   getDefaultVoicePromptBinding,
+  resolveFirstReflectionPromptBinding,
   resolveOnboardingPromptBinding,
 } from "@/lib/voice/promptRegistry";
 
@@ -14,8 +15,13 @@ describe("voice prompt registry", () => {
     });
   });
 
-  it("returns null for first_reflection flow", () => {
-    expect(getDefaultVoicePromptBinding("FIRST_REFLECTION")).toBeNull();
+  it("returns default first_reflection prompt binding", () => {
+    const binding = getDefaultVoicePromptBinding("FIRST_REFLECTION");
+    expect(binding).toEqual({
+      key: "voice_first_reflection_day0",
+      version: "v1",
+      templatePath: "src/lib/llm/prompts/voice_first_reflection_day0_v1.md",
+    });
   });
 
   it("falls back to current onboarding prompt for legacy sessions", () => {
@@ -35,5 +41,15 @@ describe("voice prompt registry", () => {
         promptVersion: "v99",
       })
     ).toThrow("Unsupported onboarding prompt binding");
+  });
+
+  it("falls back to current first_reflection prompt for legacy sessions", () => {
+    const binding = resolveFirstReflectionPromptBinding({
+      promptKey: null,
+      promptVersion: null,
+    });
+    expect(binding.templatePath).toBe(
+      "src/lib/llm/prompts/voice_first_reflection_day0_v1.md"
+    );
   });
 });

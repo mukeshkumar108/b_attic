@@ -3,7 +3,7 @@ import type { User, VoiceFlow, VoiceSession, VoiceTurn } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
 import { ensureDateLocal, validateDateLocal } from "@/lib/bluum/dateLocal";
 import { getOrCreateDailyStatus } from "@/lib/bluum/dailyStatus";
-import { getSafetyResponse, runSafetyGate, runRubricCoach } from "@/lib/bluum/coaching";
+import { getSafetyResponse, runSafetyGate } from "@/lib/bluum/coaching";
 import { finalizeVoiceReflection } from "@/lib/voice/reflectionPersistence";
 import {
   DEFAULT_VOICE_LOCALE,
@@ -22,7 +22,12 @@ import {
   type OnboardingDraft,
 } from "@/lib/voice/onboardingFlow";
 import {
+  FIRST_REFLECTION_DAY0_HANDSHAKE_TEXT,
+  runFirstReflectionDay0Turn,
+} from "@/lib/voice/firstReflectionDay0Flow";
+import {
   getDefaultVoicePromptBinding,
+  resolveFirstReflectionPromptBinding,
   resolveOnboardingPromptBinding,
   type VoicePromptBinding,
 } from "@/lib/voice/promptRegistry";
@@ -217,10 +222,33 @@ function getOnboardingStartAudioFromEnv(): AudioPayloadLike | null {
     return null;
   }
 
+  const sharedMime = process.env.VOICE_HANDSHAKE_MIME?.trim();
+
   return {
     audioUrl,
     audioMimeType:
-      process.env.VOICE_ONBOARDING_HANDSHAKE_MIME?.trim() || "audio/mpeg",
+      process.env.VOICE_ONBOARDING_HANDSHAKE_MIME?.trim() ||
+      sharedMime ||
+      "audio/mpeg",
+    audioExpiresAt: null,
+    ttsAvailable: true,
+  };
+}
+
+function getFirstReflectionDay0StartAudioFromEnv(): AudioPayloadLike | null {
+  const audioUrl = process.env.VOICE_FIRST_REFLECTION_DAY0_HANDSHAKE_URL?.trim();
+  if (!audioUrl) {
+    return null;
+  }
+
+  const sharedMime = process.env.VOICE_HANDSHAKE_MIME?.trim();
+
+  return {
+    audioUrl,
+    audioMimeType:
+      process.env.VOICE_FIRST_REFLECTION_DAY0_HANDSHAKE_MIME?.trim() ||
+      sharedMime ||
+      "audio/mpeg",
     audioExpiresAt: null,
     ttsAvailable: true,
   };
@@ -345,9 +373,20 @@ export async function startVoiceSession(params: {
         "Reflection already exists for this date."
       );
     }
-    const { status } = await getOrCreateDailyStatus(params.user.id, dateLocal);
-    promptId = status.promptId;
-    promptText = status.promptText;
+    await getOrCreateDailyStatus(params.user.id, dateLocal);
+    const reflectionPromptBinding = getDefaultVoicePromptBinding(dbFlow);
+    if (!reflectionPromptBinding) {
+      throw new VoiceServiceError(
+        "internal_error",
+        500,
+        true,
+        "First reflection prompt is not configured."
+      );
+    }
+
+    loadPromptMdStrict(reflectionPromptBinding.templatePath);
+    promptId = reflectionPromptBinding.key;
+    promptText = reflectionPromptBinding.version;
   } else {
     draft = getBaseOnboardingDraft(params.user);
     const onboardingPromptBinding = getDefaultVoicePromptBinding(dbFlow);
@@ -385,13 +424,21 @@ export async function startVoiceSession(params: {
 
   const assistantText =
     dbFlow === "FIRST_REFLECTION"
-      ? `Today's prompt: ${promptText}. Share your reflection when you're ready.`
+      ? FIRST_REFLECTION_DAY0_HANDSHAKE_TEXT
       : getOnboardingWelcomeText(draft ?? {});
 
   let tts: AudioPayloadLike;
   if (dbFlow === "ONBOARDING") {
     tts =
       getOnboardingStartAudioFromEnv() ??
+      (await synthesizeWithElevenlabs({
+        text: assistantText,
+        voiceId: params.ttsVoiceId ?? null,
+        blobPath: `voice/${params.user.id}/${session.id}/start.mp3`,
+      }));
+  } else if (dbFlow === "FIRST_REFLECTION") {
+    tts =
+      getFirstReflectionDay0StartAudioFromEnv() ??
       (await synthesizeWithElevenlabs({
         text: assistantText,
         voiceId: params.ttsVoiceId ?? null,
@@ -442,7 +489,7 @@ async function computeAssistantTurn(params: {
 }> {
   const promptText =
     params.session.flow === "FIRST_REFLECTION"
-      ? params.session.promptText ?? "Voice reflection"
+      ? "Voice first reflection conversation"
       : "Voice onboarding conversation";
 
   const safetyGate = await runSafetyGate({
@@ -552,19 +599,72 @@ async function computeAssistantTurn(params: {
     };
   }
 
+  let firstReflectionPromptBinding: VoicePromptBinding;
+  try {
+    firstReflectionPromptBinding = resolveFirstReflectionPromptBinding({
+      promptKey: params.session.promptId,
+      promptVersion: params.session.promptText,
+    });
+  } catch {
+    throw new VoiceServiceError(
+      "internal_error",
+      500,
+      true,
+      "First reflection prompt binding is invalid."
+    );
+  }
+
+  const historyTurns = await prisma.voiceTurn.findMany({
+    where: {
+      sessionId: params.session.id,
+      turnIndex: { lt: params.turnIndex },
+    },
+    orderBy: { turnIndex: "desc" },
+    take: 6,
+    select: {
+      userTranscriptText: true,
+      assistantText: true,
+    },
+  });
+  const history = historyTurns
+    .reverse()
+    .map((turn) => ({
+      userTranscript: turn.userTranscriptText,
+      assistantText: turn.assistantText,
+    }));
+
   const llmStartedAt = Date.now();
-  const coach = await runRubricCoach({
-    promptText,
-    responseText: params.transcript,
+  const firstReflectionResult = await runFirstReflectionDay0Turn({
+    transcript: params.transcript,
+    promptTemplatePath: firstReflectionPromptBinding.templatePath,
+    history,
+    profile: {
+      name: params.user.displayName ?? null,
+      ageRange: "unknown",
+      sex: "unknown",
+    },
   });
   llmLatencyMs = Date.now() - llmStartedAt;
-  assistantText = coach.coachText;
-  readyToEnd = true;
-  safetyPayload = {
-    flagged: false,
-    reason: "none",
-    safeResponse: null,
-  };
+
+  if (firstReflectionResult.safetyFlag) {
+    const safeResponse = getSafetyResponse();
+    assistantText = safeResponse.message;
+    readyToEnd = true;
+    safetyPayload = {
+      flagged: true,
+      reason: "self_harm",
+      safeResponse,
+    };
+  } else {
+    assistantText = firstReflectionResult.assistantText;
+    readyToEnd = firstReflectionResult.readyToEnd;
+    safetyPayload = {
+      flagged: false,
+      reason: "none",
+      safeResponse: null,
+    };
+  }
+
   return {
     assistantText,
     readyToEnd,
