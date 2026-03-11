@@ -35,10 +35,12 @@ function formatConversationHistory(
     .join("\n\n");
 }
 
-function sanitizeReplyForSpeech(text: string): string {
+export function sanitizeReflectionCoreReplyForSpeech(text: string): string {
   let cleaned = text.trim();
-  cleaned = cleaned.replace(/STATE:\s*```json[\s\S]*?```/gi, "");
+  cleaned = cleaned.replace(/STATE:\s*```(?:json)?[\s\S]*?```/gi, "");
+  cleaned = cleaned.replace(/STATE:\s*json\s*{[\s\S]*$/gi, "");
   cleaned = cleaned.replace(/STATE:\s*{[\s\S]*$/gi, "");
+  cleaned = cleaned.replace(/\n\s*STATE:\s*[\s\S]*$/i, "");
   cleaned = cleaned.replace(/```json[\s\S]*?```/gi, "");
   cleaned = cleaned.replace(/^\s*REPLY:\s*/i, "");
 
@@ -53,31 +55,44 @@ function sanitizeReplyForSpeech(text: string): string {
   return cleaned.replace(/\s+/g, " ").trim();
 }
 
+function extractStateJson(raw: string): string | null {
+  const stateIdx = raw.search(/STATE:\s*/i);
+  if (stateIdx === -1) {
+    return null;
+  }
+
+  let stateChunk = raw.slice(stateIdx).replace(/^STATE:\s*/i, "").trim();
+  stateChunk = stateChunk.replace(/^```(?:json)?/i, "").replace(/```$/i, "").trim();
+  stateChunk = stateChunk.replace(/^json\s*/i, "").trim();
+
+  const objectMatch = stateChunk.match(/\{[\s\S]*\}/);
+  return objectMatch?.[0] ?? null;
+}
+
 function parseReflectionCoreLLMResponse(
   raw: string
 ): { reply: string; state: z.infer<typeof ReflectionCoreLLMStateSchema> } | null {
-  const stateFromFenced = raw.match(/STATE:\s*```json\s*([\s\S]*?)```/i)?.[1] ?? null;
-  const stateFromInline = raw.match(/STATE:\s*({[\s\S]*})/i)?.[1] ?? null;
-  const stateRaw = stateFromFenced ?? stateFromInline;
-  if (!stateRaw) {
-    return null;
-  }
-
-  const state = parseJsonWithZod(stateRaw, ReflectionCoreLLMStateSchema);
-  if (!state) {
-    return null;
-  }
-
   const replyMatch = raw.match(/REPLY:\s*([\s\S]*?)\n\s*STATE:/i);
-  const reply = replyMatch?.[1]?.trim() ?? "";
-  const cleanReply = sanitizeReplyForSpeech(
+  const reply = replyMatch?.[1]?.trim() ?? raw;
+  const cleanReply = sanitizeReflectionCoreReplyForSpeech(
     reply.replace(/^```(?:text)?/i, "").replace(/```$/i, "").trim()
   );
   if (!cleanReply) {
     return null;
   }
 
-  return { reply: cleanReply, state };
+  const stateRaw = extractStateJson(raw);
+  const state = stateRaw
+    ? parseJsonWithZod(stateRaw, ReflectionCoreLLMStateSchema)
+    : null;
+
+  return {
+    reply: cleanReply,
+    state: state ?? {
+      session_complete: false,
+      safety_flag: false,
+    },
+  };
 }
 
 export async function runReflectionCoreTurn(params: {
