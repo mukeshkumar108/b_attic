@@ -40,6 +40,13 @@ interface SafetyPayload {
   safeResponse: ReturnType<typeof getSafetyResponse> | null;
 }
 
+interface AudioPayloadLike {
+  audioUrl: string | null;
+  audioMimeType: string | null;
+  audioExpiresAt: string | null;
+  ttsAvailable: boolean;
+}
+
 function toDbFlow(flow: VoiceFlowInput): VoiceFlow {
   return flow === "onboarding" ? "ONBOARDING" : "FIRST_REFLECTION";
 }
@@ -70,6 +77,10 @@ function parseOnboardingDraft(value: unknown): OnboardingDraft {
       typeof draft.reflectionReminderTimeLocal === "string"
         ? draft.reflectionReminderTimeLocal
         : null,
+    sessionComplete:
+      typeof draft.sessionComplete === "boolean"
+        ? draft.sessionComplete
+        : null,
   };
 }
 
@@ -79,6 +90,7 @@ function getBaseOnboardingDraft(user: User): OnboardingDraft {
     timezone: user.timezone ?? null,
     reflectionReminderEnabled: user.reflectionReminderEnabled,
     reflectionReminderTimeLocal: user.reflectionReminderTimeLocal ?? null,
+    sessionComplete: false,
   };
 }
 
@@ -97,6 +109,21 @@ function makeAssistantPayload(
     audioMimeType: tts.audioMimeType,
     audioExpiresAt: tts.audioExpiresAt,
     ttsAvailable: tts.ttsAvailable,
+  };
+}
+
+function getOnboardingStartAudioFromEnv(): AudioPayloadLike | null {
+  const audioUrl = process.env.VOICE_ONBOARDING_HANDSHAKE_URL?.trim();
+  if (!audioUrl) {
+    return null;
+  }
+
+  return {
+    audioUrl,
+    audioMimeType:
+      process.env.VOICE_ONBOARDING_HANDSHAKE_MIME?.trim() || "audio/mpeg",
+    audioExpiresAt: null,
+    ttsAvailable: true,
   };
 }
 
@@ -248,11 +275,22 @@ export async function startVoiceSession(params: {
       ? `Today's prompt: ${promptText}. Share your reflection when you're ready.`
       : getOnboardingWelcomeText(draft ?? {});
 
-  const tts = await synthesizeWithElevenlabs({
-    text: assistantText,
-    voiceId: params.ttsVoiceId ?? null,
-    blobPath: `voice/${params.user.id}/${session.id}/start.mp3`,
-  });
+  let tts: AudioPayloadLike;
+  if (dbFlow === "ONBOARDING") {
+    tts =
+      getOnboardingStartAudioFromEnv() ??
+      (await synthesizeWithElevenlabs({
+        text: assistantText,
+        voiceId: params.ttsVoiceId ?? null,
+        blobPath: `voice/${params.user.id}/${session.id}/start.mp3`,
+      }));
+  } else {
+    tts = await synthesizeWithElevenlabs({
+      text: assistantText,
+      voiceId: params.ttsVoiceId ?? null,
+      blobPath: `voice/${params.user.id}/${session.id}/start.mp3`,
+    });
+  }
 
   const body = {
     session: {
@@ -380,20 +418,53 @@ export async function processVoiceTurn(params: {
       safeResponse,
     };
   } else if (session.flow === "ONBOARDING") {
+    const historyTurns = await prisma.voiceTurn.findMany({
+      where: { sessionId: session.id },
+      orderBy: { turnIndex: "desc" },
+      take: 6,
+      select: {
+        userTranscriptText: true,
+        assistantText: true,
+      },
+    });
+    const history = historyTurns
+      .reverse()
+      .map((turn) => ({
+        userTranscript: turn.userTranscriptText,
+        assistantText: turn.assistantText,
+      }));
+
     const llmStartedAt = Date.now();
     const onboardingResult = await runOnboardingTurn({
       transcript: transcribed.text,
       draft: parseOnboardingDraft(session.draft),
+      history,
+      profile: {
+        name: params.user.displayName ?? null,
+        ageRange: "unknown",
+        sex: "unknown",
+      },
     });
     llmLatencyMs = Date.now() - llmStartedAt;
-    assistantText = onboardingResult.assistantText;
-    readyToEnd = onboardingResult.readyToEnd;
     draftToSave = onboardingResult.draft;
-    safetyPayload = {
-      flagged: false,
-      reason: "none",
-      safeResponse: null,
-    };
+    if (onboardingResult.safetyFlag) {
+      const safeResponse = getSafetyResponse();
+      assistantText = safeResponse.message;
+      readyToEnd = true;
+      safetyPayload = {
+        flagged: true,
+        reason: "self_harm",
+        safeResponse,
+      };
+    } else {
+      assistantText = onboardingResult.assistantText;
+      readyToEnd = onboardingResult.readyToEnd;
+      safetyPayload = {
+        flagged: false,
+        reason: "none",
+        safeResponse: null,
+      };
+    }
   } else {
     const llmStartedAt = Date.now();
     const coach = await runRubricCoach({
@@ -587,42 +658,40 @@ export async function endVoiceSession(params: {
         );
       }
 
-      const displayName = (draft.displayName ?? "").trim();
-      if (!displayName || displayName.length > 50) {
+      const displayName =
+        typeof draft.displayName === "string"
+          ? draft.displayName.trim()
+          : (params.user.displayName ?? "").trim();
+      if (displayName.length > 50) {
         throw new VoiceServiceError(
           "onboarding_incomplete",
           422,
           false,
-          "Display name is required."
+          "Display name is invalid."
         );
       }
-      if (!draft.timezone || !isValidTimezone(draft.timezone)) {
-        throw new VoiceServiceError(
-          "onboarding_incomplete",
-          422,
-          false,
-          "Timezone is required."
-        );
-      }
-      if (
-        draft.reflectionReminderEnabled &&
-        !draft.reflectionReminderTimeLocal
-      ) {
-        throw new VoiceServiceError(
-          "onboarding_incomplete",
-          422,
-          false,
-          "Reminder time is required when reminders are enabled."
-        );
-      }
+
+      const timezone =
+        draft.timezone && isValidTimezone(draft.timezone)
+          ? draft.timezone
+          : params.user.timezone ?? null;
+      const reflectionReminderEnabled =
+        typeof draft.reflectionReminderEnabled === "boolean"
+          ? draft.reflectionReminderEnabled
+          : params.user.reflectionReminderEnabled;
+      const reflectionReminderTimeLocal = reflectionReminderEnabled
+        ? draft.reflectionReminderTimeLocal ??
+          params.user.reflectionReminderTimeLocal ??
+          null
+        : null;
 
       const updatedUser = await prisma.user.update({
         where: { id: params.user.id },
         data: {
-          displayName,
-          timezone: draft.timezone,
-          reflectionReminderEnabled: draft.reflectionReminderEnabled ?? true,
-          reflectionReminderTimeLocal: draft.reflectionReminderTimeLocal ?? null,
+          displayName: displayName || null,
+          timezone,
+          reflectionReminderEnabled,
+          reflectionReminderTimeLocal,
           onboardingCompletedAt: params.user.onboardingCompletedAt ?? new Date(),
         },
       });

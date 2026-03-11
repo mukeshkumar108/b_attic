@@ -1,32 +1,42 @@
 import { z } from "zod";
-import { callOpenRouter, parseJsonWithZod } from "@/lib/llm/openrouter";
+import {
+  callOpenRouterWithOptions,
+  loadPromptMd,
+  parseJsonWithZod,
+} from "@/lib/llm/openrouter";
 
 const TIMEZONE_REGEX = /^[A-Za-z_]+\/[A-Za-z_]+$/;
 const TIME_LOCAL_REGEX = /^\d{2}:\d{2}$/;
+const VOICE_ONBOARDING_PROMPT_PATH =
+  "src/lib/llm/prompts/voice_onboarding_welcome_v4.md";
+
+const OnboardingLLMStateSchema = z.object({
+  session_complete: z.boolean(),
+  safety_flag: z.boolean(),
+});
+
+export const ONBOARDING_HANDSHAKE_TEXT =
+  "Welcome to Bluum. I'm really glad you're here. Most gratitude apps ask you to write lists of things you're grateful for every day. You write them and usually nothing really changes. Bluum works a little differently. Each evening we have a short conversation and find one real moment from your day, something small you might normally rush past. And we go back into it together and actually feel it again. That's the part that slowly rewires how your brain sees your day over time. Not the list, the feeling. Before we go any further, I'm curious, have you ever tried gratitude before? A journal, an app, anything like that?";
 
 export interface OnboardingDraft {
   displayName?: string | null;
   timezone?: string | null;
   reflectionReminderEnabled?: boolean | null;
   reflectionReminderTimeLocal?: string | null;
+  sessionComplete?: boolean | null;
 }
 
 export interface OnboardingTurnResult {
   draft: OnboardingDraft;
   assistantText: string;
   readyToEnd: boolean;
+  safetyFlag: boolean;
 }
 
-const OnboardingLLMResultSchema = z.object({
-  displayName: z.string().optional().nullable(),
-  timezone: z.string().optional().nullable(),
-  reflectionReminderEnabled: z.boolean().optional().nullable(),
-  reflectionReminderTimeLocal: z.string().optional().nullable(),
-  assistantText: z.string().min(1).max(400),
-  readyToEnd: z.boolean(),
-});
-
 export function getOnboardingWelcomeText(draft: OnboardingDraft): string {
+  if (!draft.displayName && !draft.sessionComplete) {
+    return ONBOARDING_HANDSHAKE_TEXT;
+  }
   if (!draft.displayName) {
     return "Welcome. What name should I use for you?";
   }
@@ -39,10 +49,28 @@ export function getOnboardingWelcomeText(draft: OnboardingDraft): string {
 export async function runOnboardingTurn(params: {
   transcript: string;
   draft: OnboardingDraft;
+  history?: Array<{ userTranscript: string; assistantText: string }>;
+  profile?: {
+    name?: string | null;
+    ageRange?: string | null;
+    sex?: string | null;
+  };
 }): Promise<OnboardingTurnResult> {
-  const llmResult = await tryLLMOnboarding(params.transcript, params.draft);
+  const llmResult = await tryLLMOnboarding({
+    transcript: params.transcript,
+    draft: params.draft,
+    history: params.history ?? [],
+    profile: params.profile,
+  });
   if (llmResult) {
-    return finalizeOnboardingDraft(mergeDraft(params.draft, llmResult), llmResult.assistantText);
+    const extracted = extractDraftFromTranscript(params.transcript, params.draft);
+    const merged = mergeDraft(params.draft, extracted);
+    const sessionComplete = llmResult.state.session_complete;
+    return finalizeOnboardingDraft(
+      { ...merged, sessionComplete },
+      llmResult.reply,
+      llmResult.state.safety_flag
+    );
   }
 
   return runHeuristicOnboarding(params.transcript, params.draft);
@@ -79,36 +107,109 @@ function mergeDraft(
   ) {
     merged.reflectionReminderTimeLocal = prev.reflectionReminderTimeLocal ?? null;
   }
+  if (typeof updates.sessionComplete === "boolean") {
+    merged.sessionComplete = updates.sessionComplete;
+  }
 
   return merged;
 }
 
-async function tryLLMOnboarding(
-  transcript: string,
-  draft: OnboardingDraft
-): Promise<(OnboardingDraft & { assistantText: string; readyToEnd: boolean }) | null> {
-  const prompt = [
-    "Extract onboarding fields from the user utterance.",
-    "Return strict JSON only.",
-    `Current draft: ${JSON.stringify(draft)}`,
-    `User utterance: ${transcript}`,
-    "JSON shape:",
-    '{"displayName":string|null,"timezone":string|null,"reflectionReminderEnabled":boolean|null,"reflectionReminderTimeLocal":"HH:MM"|null,"assistantText":string,"readyToEnd":boolean}',
-    "Rules:",
-    "- Keep existing values unless user clearly changes them.",
-    "- timezone must be IANA like America/New_York.",
-    "- reminder time must be HH:MM 24h format.",
-    "- Ask one short follow-up question in assistantText when fields are missing.",
-    "- readyToEnd true only when displayName and timezone are present and reminder time is present if reminders are enabled.",
+function formatConversationHistory(
+  history: Array<{ userTranscript: string; assistantText: string }>
+): string {
+  if (!history.length) {
+    return "None yet.";
+  }
+
+  return history
+    .map(
+      (turn, idx) =>
+        `Turn ${idx + 1}:\nAssistant: ${turn.assistantText}\nUser: ${turn.userTranscript}`
+    )
+    .join("\n\n");
+}
+
+function parseOnboardingLLMResponse(
+  raw: string
+): { reply: string; state: z.infer<typeof OnboardingLLMStateSchema> } | null {
+  const stateFromFenced = raw.match(/STATE:\s*```json\s*([\s\S]*?)```/i)?.[1] ?? null;
+  const stateFromInline = raw.match(/STATE:\s*({[\s\S]*})/i)?.[1] ?? null;
+  const stateRaw = stateFromFenced ?? stateFromInline;
+  if (!stateRaw) {
+    return null;
+  }
+
+  const state = parseJsonWithZod(stateRaw, OnboardingLLMStateSchema);
+  if (!state) {
+    return null;
+  }
+
+  const replyMatch = raw.match(/REPLY:\s*([\s\S]*?)\n\s*STATE:/i);
+  const reply = replyMatch?.[1]?.trim() ?? "";
+  const cleanReply = sanitizeOnboardingReplyForSpeech(
+    reply.replace(/^```(?:text)?/i, "").replace(/```$/i, "").trim()
+  );
+  if (!cleanReply) {
+    return null;
+  }
+
+  return { reply: cleanReply, state };
+}
+
+export function sanitizeOnboardingReplyForSpeech(text: string): string {
+  let cleaned = text.trim();
+
+  // Strip accidental control/output sections if the model leaks format scaffolding.
+  cleaned = cleaned.replace(/STATE:\s*```json[\s\S]*?```/gi, "");
+  cleaned = cleaned.replace(/STATE:\s*{[\s\S]*$/gi, "");
+  cleaned = cleaned.replace(/```json[\s\S]*?```/gi, "");
+  cleaned = cleaned.replace(/^\s*REPLY:\s*/i, "");
+
+  if (
+    cleaned.includes('"session_complete"') ||
+    cleaned.includes('"safety_flag"') ||
+    (cleaned.startsWith("{") && cleaned.endsWith("}"))
+  ) {
+    return "";
+  }
+
+  return cleaned.replace(/\s+/g, " ").trim();
+}
+
+async function tryLLMOnboarding(params: {
+  transcript: string;
+  draft: OnboardingDraft;
+  history: Array<{ userTranscript: string; assistantText: string }>;
+  profile?: {
+    name?: string | null;
+    ageRange?: string | null;
+    sex?: string | null;
+  };
+}): Promise<{ reply: string; state: z.infer<typeof OnboardingLLMStateSchema> } | null> {
+  const corePrompt = loadPromptMd(VOICE_ONBOARDING_PROMPT_PATH);
+  const runtimeContext = [
+    "",
+    "SESSION CONTEXT",
+    "First ever session",
+    `Name: ${params.profile?.name || params.draft.displayName || "unknown"}`,
+    `Age range: ${params.profile?.ageRange || "unknown"}`,
+    `Sex: ${params.profile?.sex || "unknown"}`,
+    "",
+    "CONVERSATION SO FAR",
+    formatConversationHistory(params.history),
+    "",
+    "USER TRANSCRIPT:",
+    `User: ${params.transcript}`,
   ].join("\n");
+  const prompt = `${corePrompt}\n${runtimeContext}`;
 
   try {
-    const raw = await callOpenRouter(prompt);
-    const parsed = parseJsonWithZod(raw, OnboardingLLMResultSchema);
-    if (!parsed) {
-      return null;
-    }
-    return parsed;
+    const raw = await callOpenRouterWithOptions(prompt, {
+      model: process.env.OPENROUTER_ONBOARDING_MODEL,
+      temperature: 0.4,
+      maxTokens: 700,
+    });
+    return parseOnboardingLLMResponse(raw);
   } catch {
     return null;
   }
@@ -118,6 +219,14 @@ function runHeuristicOnboarding(
   transcript: string,
   draft: OnboardingDraft
 ): OnboardingTurnResult {
+  const next = extractDraftFromTranscript(transcript, draft);
+  return finalizeOnboardingDraft(next, getFollowupText(next), false);
+}
+
+function extractDraftFromTranscript(
+  transcript: string,
+  draft: OnboardingDraft
+): OnboardingDraft {
   const next: OnboardingDraft = { ...draft };
   const text = transcript.trim();
   const lower = text.toLowerCase();
@@ -147,20 +256,20 @@ function runHeuristicOnboarding(
     next.displayName = text;
   }
 
-  return finalizeOnboardingDraft(next, getFollowupText(next));
+  return next;
 }
 
 function finalizeOnboardingDraft(
   draft: OnboardingDraft,
-  assistantText: string
+  assistantText: string,
+  safetyFlag: boolean
 ): OnboardingTurnResult {
-  const readyToEnd = isOnboardingComplete(draft);
+  const readyToEnd = isOnboardingComplete(draft) || Boolean(draft.sessionComplete);
   return {
     draft,
-    assistantText: readyToEnd
-      ? "Perfect. I have what I need. You can finish onboarding now."
-      : assistantText,
+    assistantText,
     readyToEnd,
+    safetyFlag,
   };
 }
 
@@ -181,6 +290,9 @@ function getFollowupText(draft: OnboardingDraft): string {
 }
 
 export function isOnboardingComplete(draft: OnboardingDraft): boolean {
+  if (draft.sessionComplete) {
+    return true;
+  }
   if (!draft.displayName || !draft.timezone) {
     return false;
   }

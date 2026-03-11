@@ -233,6 +233,62 @@ export async function callOpenRouter(prompt: string): Promise<string> {
   return content.trim();
 }
 
+export interface OpenRouterCallOptions {
+  model?: string;
+  temperature?: number;
+  maxTokens?: number;
+}
+
+export async function callOpenRouterWithOptions(
+  prompt: string,
+  options?: OpenRouterCallOptions
+): Promise<string> {
+  const apiKey = process.env.OPENROUTER_API_KEY;
+  if (!apiKey) {
+    throw new Error("OPENROUTER_API_KEY not set");
+  }
+
+  const model =
+    options?.model || process.env.OPENROUTER_MODEL || DEFAULT_MODEL;
+  const temperature = options?.temperature ?? 0.3;
+  const maxTokens = options?.maxTokens ?? 500;
+
+  const response = await fetch(OPENROUTER_API_URL, {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${apiKey}`,
+      "Content-Type": "application/json",
+      "HTTP-Referer": process.env.NEXT_PUBLIC_APP_URL || "https://bluum.app",
+      "X-Title": "Bluum",
+    },
+    body: JSON.stringify({
+      model,
+      messages: [
+        {
+          role: "user",
+          content: prompt,
+        },
+      ],
+      temperature,
+      max_tokens: maxTokens,
+    }),
+  });
+
+  if (!response.ok) {
+    const errorText = await response.text();
+    throw new Error(`OpenRouter API error: ${response.status} ${errorText}`);
+  }
+
+  const data = await response.json();
+  const content = data.choices?.[0]?.message?.content;
+
+  if (typeof content !== "string") {
+    throw new Error("Invalid OpenRouter response structure");
+  }
+
+  return content.trim();
+}
+
 /**
  * Parse raw LLM output as JSON and validate with Zod schema.
  * Returns null if parsing or validation fails.

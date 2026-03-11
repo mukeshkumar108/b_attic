@@ -18,6 +18,7 @@ const envSchema = z
     // OpenRouter for LLM calls (optional - fallback behavior if not set)
     OPENROUTER_API_KEY: z.string().min(1).optional(),
     OPENROUTER_MODEL: z.string().optional(),
+    OPENROUTER_ONBOARDING_MODEL: z.string().optional(),
     // Voice providers (optional - required only for voice session endpoints)
     LEMONFOX_API_KEY: z.string().min(1).optional(),
     LEMONFOX_API_URL: z.string().url().optional(),
@@ -30,6 +31,8 @@ const envSchema = z
     VOICE_TTS_AUDIO_URL_TTL_SECONDS: z.coerce.number().int().positive().optional(),
     VOICE_MAX_AUDIO_BYTES: z.coerce.number().int().positive().optional(),
     VOICE_MAX_AUDIO_MS: z.coerce.number().int().positive().optional(),
+    VOICE_ONBOARDING_HANDSHAKE_URL: z.string().url().optional(),
+    VOICE_ONBOARDING_HANDSHAKE_MIME: z.string().optional(),
     VOICE_TEST_API_KEY: z.string().min(1).optional(),
     VOICE_TEST_USER_ID: z.string().min(1).optional(),
   })

@@ -3,11 +3,12 @@ import {
   getOnboardingWelcomeText,
   isOnboardingComplete,
   isValidTimezone,
+  sanitizeOnboardingReplyForSpeech,
 } from "@/lib/voice/onboardingFlow";
 
 describe("onboardingFlow", () => {
-  it("returns welcome question when display name is missing", () => {
-    expect(getOnboardingWelcomeText({})).toContain("name");
+  it("returns handshake text when display name is missing", () => {
+    expect(getOnboardingWelcomeText({})).toContain("Welcome to Bluum");
   });
 
   it("validates complete onboarding drafts", () => {
@@ -35,5 +36,21 @@ describe("onboardingFlow", () => {
   it("validates timezone format and value", () => {
     expect(isValidTimezone("America/New_York")).toBe(true);
     expect(isValidTimezone("not_a_timezone")).toBe(false);
+  });
+
+  it("accepts explicit session completion marker", () => {
+    expect(
+      isOnboardingComplete({
+        sessionComplete: true,
+      })
+    ).toBe(true);
+  });
+
+  it("strips leaked STATE/json segments from speakable reply", () => {
+    const raw =
+      'Great, let\'s do this tonight.\n\nSTATE:\n```json\n{"session_complete":true,"safety_flag":false}\n```';
+    expect(sanitizeOnboardingReplyForSpeech(raw)).toBe(
+      "Great, let's do this tonight."
+    );
   });
 });
