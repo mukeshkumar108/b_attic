@@ -55,6 +55,9 @@ interface AudioPayloadLike {
 
 type VoiceTurnResponseMode = "final" | "staged" | "finalize";
 
+const TURN_FINALIZE_LOCK_MARKER = "__TURN_FINALIZING__";
+const TURN_FINALIZE_LOCK_STALE_MS = 2 * 60 * 1000;
+
 function toDbFlow(flow: VoiceFlowInput): VoiceFlow {
   return flow === "onboarding" ? "ONBOARDING" : "FIRST_REFLECTION";
 }
@@ -147,6 +150,65 @@ function makePendingTurnBody(params: {
       assistantPending: true,
     },
   };
+}
+
+async function acquireTurnFinalizeLock(turnId: string): Promise<{
+  status: "acquired" | "finalized" | "in_progress";
+  turn: VoiceTurn;
+}> {
+  const staleBefore = new Date(Date.now() - TURN_FINALIZE_LOCK_STALE_MS);
+
+  const claimed = await prisma.voiceTurn.updateMany({
+    where: {
+      id: turnId,
+      responseJson: { equals: Prisma.AnyNull },
+      OR: [
+        { assistantText: "" },
+        {
+          assistantText: TURN_FINALIZE_LOCK_MARKER,
+          updatedAt: { lt: staleBefore },
+        },
+      ],
+    },
+    data: {
+      assistantText: TURN_FINALIZE_LOCK_MARKER,
+    },
+  });
+
+  const current = await prisma.voiceTurn.findUnique({
+    where: { id: turnId },
+  });
+  if (!current) {
+    throw new VoiceServiceError(
+      "turn_not_found",
+      404,
+      false,
+      "Turn not found for finalize."
+    );
+  }
+
+  if (current.responseJson) {
+    return { status: "finalized", turn: current };
+  }
+
+  if (claimed.count > 0) {
+    return { status: "acquired", turn: current };
+  }
+
+  return { status: "in_progress", turn: current };
+}
+
+async function releaseTurnFinalizeLock(turnId: string): Promise<void> {
+  await prisma.voiceTurn.updateMany({
+    where: {
+      id: turnId,
+      responseJson: { equals: Prisma.AnyNull },
+      assistantText: TURN_FINALIZE_LOCK_MARKER,
+    },
+    data: {
+      assistantText: "",
+    },
+  });
 }
 
 function getOnboardingStartAudioFromEnv(): AudioPayloadLike | null {
@@ -678,14 +740,33 @@ export async function processVoiceTurn(params: {
     if (existingTurn.responseJson) {
       return { status: 200, body: existingTurn.responseJson };
     }
-    const finalized = await finalizeVoiceTurn({
-      session,
-      user: params.user,
-      turn: existingTurn,
-      transcript: existingTurn.userTranscriptText,
-      sttLatencyMs: existingTurn.sttLatencyMs ?? 0,
-    });
-    return { status: 200, body: finalized };
+
+    const lock = await acquireTurnFinalizeLock(existingTurn.id);
+    if (lock.status === "finalized") {
+      return { status: 200, body: lock.turn.responseJson };
+    }
+    if (lock.status === "in_progress") {
+      throw new VoiceServiceError(
+        "turn_finalize_in_progress",
+        409,
+        true,
+        "Turn finalize is in progress. Retry shortly."
+      );
+    }
+
+    try {
+      const finalized = await finalizeVoiceTurn({
+        session,
+        user: params.user,
+        turn: lock.turn,
+        transcript: lock.turn.userTranscriptText,
+        sttLatencyMs: lock.turn.sttLatencyMs ?? 0,
+      });
+      return { status: 200, body: finalized };
+    } catch (err) {
+      await releaseTurnFinalizeLock(existingTurn.id);
+      throw err;
+    }
   }
 
   if (!params.audio || !params.mimeType) {
