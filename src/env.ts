@@ -18,6 +18,18 @@ const envSchema = z
     // OpenRouter for LLM calls (optional - fallback behavior if not set)
     OPENROUTER_API_KEY: z.string().min(1).optional(),
     OPENROUTER_MODEL: z.string().optional(),
+    // Voice providers (optional - required only for voice session endpoints)
+    LEMONFOX_API_KEY: z.string().min(1).optional(),
+    LEMONFOX_API_URL: z.string().url().optional(),
+    LEMONFOX_STT_MODEL: z.string().optional(),
+    ELEVENLABS_API_KEY: z.string().min(1).optional(),
+    ELEVENLABS_API_URL: z.string().url().optional(),
+    ELEVENLABS_MODEL_ID: z.string().optional(),
+    ELEVENLABS_VOICE_ID: z.string().optional(),
+    VOICE_SESSION_TTL_MINUTES: z.coerce.number().int().positive().optional(),
+    VOICE_TTS_AUDIO_URL_TTL_SECONDS: z.coerce.number().int().positive().optional(),
+    VOICE_MAX_AUDIO_BYTES: z.coerce.number().int().positive().optional(),
+    VOICE_MAX_AUDIO_MS: z.coerce.number().int().positive().optional(),
   })
   .superRefine((value, ctx) => {
     if (value.NODE_ENV === "production") {
