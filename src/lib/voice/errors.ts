@@ -10,6 +10,8 @@ export type VoiceErrorCode =
   | "stt_provider_error"
   | "llm_provider_error"
   | "tts_provider_error"
+  | "turn_not_found"
+  | "turn_pending_finalize"
   | "session_not_found"
   | "session_expired"
   | "session_inactive"

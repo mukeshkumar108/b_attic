@@ -1,5 +1,5 @@
 import { Prisma } from "@prisma/client";
-import type { User, VoiceFlow, VoiceSession } from "@prisma/client";
+import type { User, VoiceFlow, VoiceSession, VoiceTurn } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
 import { ensureDateLocal, validateDateLocal } from "@/lib/bluum/dateLocal";
 import { getOrCreateDailyStatus } from "@/lib/bluum/dailyStatus";
@@ -52,6 +52,8 @@ interface AudioPayloadLike {
   audioExpiresAt: string | null;
   ttsAvailable: boolean;
 }
+
+type VoiceTurnResponseMode = "final" | "staged" | "finalize";
 
 function toDbFlow(flow: VoiceFlowInput): VoiceFlow {
   return flow === "onboarding" ? "ONBOARDING" : "FIRST_REFLECTION";
@@ -115,6 +117,35 @@ function makeAssistantPayload(
     audioMimeType: tts.audioMimeType,
     audioExpiresAt: tts.audioExpiresAt,
     ttsAvailable: tts.ttsAvailable,
+  };
+}
+
+function makePendingTurnBody(params: {
+  session: VoiceSession;
+  turnId: string;
+  turnIndex: number;
+  clientTurnId: string;
+  transcript: string;
+  expiresAt: Date;
+}): unknown {
+  return {
+    session: {
+      id: params.session.id,
+      state: "active",
+      readyToEnd: false,
+      safetyFlagged: params.session.safetyFlagged,
+      nextTurnIndex: params.turnIndex + 1,
+      expiresAt: params.expiresAt.toISOString(),
+    },
+    turn: {
+      id: params.turnId,
+      index: params.turnIndex,
+      clientTurnId: params.clientTurnId,
+      userTranscript: {
+        text: params.transcript,
+      },
+      assistantPending: true,
+    },
   };
 }
 
@@ -335,15 +366,336 @@ export async function startVoiceSession(params: {
   return { status: 201, body };
 }
 
+async function computeAssistantTurn(params: {
+  session: VoiceSession;
+  user: User;
+  transcript: string;
+  turnIndex: number;
+}): Promise<{
+  assistantText: string;
+  readyToEnd: boolean;
+  safetyPayload: SafetyPayload;
+  draftToSave: unknown;
+  llmLatencyMs: number;
+}> {
+  const promptText =
+    params.session.flow === "FIRST_REFLECTION"
+      ? params.session.promptText ?? "Voice reflection"
+      : "Voice onboarding conversation";
+
+  const safetyGate = await runSafetyGate({
+    promptText,
+    responseText: params.transcript,
+  });
+
+  let assistantText: string;
+  let readyToEnd: boolean;
+  let draftToSave: unknown = params.session.draft;
+  let safetyPayload: SafetyPayload;
+  let llmLatencyMs = 0;
+
+  if (safetyGate.flagged) {
+    const safeResponse = getSafetyResponse();
+    assistantText = safeResponse.message;
+    readyToEnd = true;
+    safetyPayload = {
+      flagged: true,
+      reason: safetyGate.reason,
+      safeResponse,
+    };
+    return {
+      assistantText,
+      readyToEnd,
+      safetyPayload,
+      draftToSave,
+      llmLatencyMs,
+    };
+  }
+
+  if (params.session.flow === "ONBOARDING") {
+    let onboardingPromptBinding: VoicePromptBinding;
+    try {
+      onboardingPromptBinding = resolveOnboardingPromptBinding({
+        promptKey: params.session.promptId,
+        promptVersion: params.session.promptText,
+      });
+    } catch {
+      throw new VoiceServiceError(
+        "internal_error",
+        500,
+        true,
+        "Onboarding prompt binding is invalid."
+      );
+    }
+
+    const historyTurns = await prisma.voiceTurn.findMany({
+      where: {
+        sessionId: params.session.id,
+        turnIndex: { lt: params.turnIndex },
+      },
+      orderBy: { turnIndex: "desc" },
+      take: 6,
+      select: {
+        userTranscriptText: true,
+        assistantText: true,
+      },
+    });
+    const history = historyTurns
+      .reverse()
+      .map((turn) => ({
+        userTranscript: turn.userTranscriptText,
+        assistantText: turn.assistantText,
+      }));
+
+    const llmStartedAt = Date.now();
+    const onboardingResult = await runOnboardingTurn({
+      transcript: params.transcript,
+      draft: parseOnboardingDraft(params.session.draft),
+      promptTemplatePath: onboardingPromptBinding.templatePath,
+      history,
+      profile: {
+        name: params.user.displayName ?? null,
+        ageRange: "unknown",
+        sex: "unknown",
+      },
+    });
+    llmLatencyMs = Date.now() - llmStartedAt;
+    draftToSave = onboardingResult.draft;
+
+    if (onboardingResult.safetyFlag) {
+      const safeResponse = getSafetyResponse();
+      assistantText = safeResponse.message;
+      readyToEnd = true;
+      safetyPayload = {
+        flagged: true,
+        reason: "self_harm",
+        safeResponse,
+      };
+    } else {
+      assistantText = onboardingResult.assistantText;
+      readyToEnd = onboardingResult.readyToEnd;
+      safetyPayload = {
+        flagged: false,
+        reason: "none",
+        safeResponse: null,
+      };
+    }
+
+    return {
+      assistantText,
+      readyToEnd,
+      safetyPayload,
+      draftToSave,
+      llmLatencyMs,
+    };
+  }
+
+  const llmStartedAt = Date.now();
+  const coach = await runRubricCoach({
+    promptText,
+    responseText: params.transcript,
+  });
+  llmLatencyMs = Date.now() - llmStartedAt;
+  assistantText = coach.coachText;
+  readyToEnd = true;
+  safetyPayload = {
+    flagged: false,
+    reason: "none",
+    safeResponse: null,
+  };
+  return {
+    assistantText,
+    readyToEnd,
+    safetyPayload,
+    draftToSave,
+    llmLatencyMs,
+  };
+}
+
+async function finalizeVoiceTurn(params: {
+  session: VoiceSession;
+  user: User;
+  turn: VoiceTurn | null;
+  transcript: string;
+  sttLatencyMs: number;
+  createInput?: {
+    clientTurnId: string;
+    requestHash: string;
+    turnIndex: number;
+  };
+}): Promise<unknown> {
+  const turnIndex = params.turn?.turnIndex ?? params.createInput?.turnIndex;
+  if (!turnIndex) {
+    throw new VoiceServiceError("internal_error", 500, true, "Invalid turn index.");
+  }
+
+  const assistantResult = await computeAssistantTurn({
+    session: params.session,
+    user: params.user,
+    transcript: params.transcript,
+    turnIndex,
+  });
+
+  const tts = await synthesizeWithElevenlabs({
+    text: assistantResult.assistantText,
+    voiceId: params.session.ttsVoiceId,
+    blobPath: `voice/${params.user.id}/${params.session.id}/turn-${turnIndex}.mp3`,
+  });
+
+  const newExpiresAt = getNextExpiry();
+
+  const upsertedTurn =
+    params.turn ??
+    (await prisma.voiceTurn.create({
+      data: {
+        sessionId: params.session.id,
+        userId: params.user.id,
+        turnIndex,
+        clientTurnId: params.createInput!.clientTurnId,
+        requestHash: params.createInput!.requestHash,
+        userTranscriptText: params.transcript,
+        assistantText: assistantResult.assistantText,
+        assistantAudioUrl: tts.audioUrl,
+        assistantAudioMimeType: tts.audioMimeType,
+        assistantAudioExpiresAt: tts.audioExpiresAt
+          ? new Date(tts.audioExpiresAt)
+          : null,
+        ttsAvailable: tts.ttsAvailable,
+        safetyFlagged: assistantResult.safetyPayload.flagged,
+        safetyReason: assistantResult.safetyPayload.reason,
+        safeResponse: assistantResult.safetyPayload.safeResponse
+          ? toJsonInput(assistantResult.safetyPayload.safeResponse)
+          : undefined,
+        sttLatencyMs: params.sttLatencyMs,
+        llmLatencyMs: assistantResult.llmLatencyMs,
+        ttsLatencyMs: tts.latencyMs,
+        totalLatencyMs:
+          params.sttLatencyMs + assistantResult.llmLatencyMs + tts.latencyMs,
+      },
+    }));
+
+  const body = {
+    session: {
+      id: params.session.id,
+      state: "active",
+      readyToEnd: assistantResult.readyToEnd,
+      safetyFlagged:
+        params.session.safetyFlagged || assistantResult.safetyPayload.flagged,
+      nextTurnIndex: turnIndex + 1,
+      expiresAt: newExpiresAt.toISOString(),
+    },
+    turn: {
+      id: upsertedTurn.id,
+      index: turnIndex,
+      clientTurnId: upsertedTurn.clientTurnId,
+      userTranscript: {
+        text: params.transcript,
+      },
+      assistant: makeAssistantPayload(assistantResult.assistantText, tts),
+      safety: assistantResult.safetyPayload,
+    },
+  };
+
+  await prisma.$transaction([
+    prisma.voiceSession.update({
+      where: { id: params.session.id },
+      data: {
+        expiresAt: newExpiresAt,
+        draft: assistantResult.draftToSave
+          ? toJsonInput(assistantResult.draftToSave)
+          : undefined,
+        safetyFlagged:
+          params.session.safetyFlagged || assistantResult.safetyPayload.flagged,
+        safetyReason: assistantResult.safetyPayload.flagged
+          ? assistantResult.safetyPayload.reason
+          : params.session.safetyReason,
+        safeResponse: assistantResult.safetyPayload.safeResponse
+          ? toJsonInput(assistantResult.safetyPayload.safeResponse)
+          : undefined,
+      },
+    }),
+    prisma.voiceTurn.update({
+      where: { id: upsertedTurn.id },
+      data: {
+        assistantText: assistantResult.assistantText,
+        assistantAudioUrl: tts.audioUrl,
+        assistantAudioMimeType: tts.audioMimeType,
+        assistantAudioExpiresAt: tts.audioExpiresAt
+          ? new Date(tts.audioExpiresAt)
+          : null,
+        ttsAvailable: tts.ttsAvailable,
+        safetyFlagged: assistantResult.safetyPayload.flagged,
+        safetyReason: assistantResult.safetyPayload.reason,
+        safeResponse: assistantResult.safetyPayload.safeResponse
+          ? toJsonInput(assistantResult.safetyPayload.safeResponse)
+          : undefined,
+        llmLatencyMs: assistantResult.llmLatencyMs,
+        ttsLatencyMs: tts.latencyMs,
+        totalLatencyMs:
+          params.sttLatencyMs + assistantResult.llmLatencyMs + tts.latencyMs,
+        responseJson: toJsonInput(body),
+      },
+    }),
+  ]);
+
+  return body;
+}
+
 export async function processVoiceTurn(params: {
   user: User;
   sessionId: string;
   clientTurnId: string;
-  audio: Buffer;
-  mimeType: string;
+  audio: Buffer | null;
+  mimeType: string | null;
   audioDurationMs?: number | null;
   locale?: string | null;
+  responseMode?: VoiceTurnResponseMode;
 }): Promise<{ status: number; body: unknown }> {
+  const responseMode = params.responseMode ?? "final";
+  const session = await ensureSessionActive(
+    await loadSessionOrThrow(params.sessionId, params.user.id)
+  );
+
+  const existingTurn = await prisma.voiceTurn.findUnique({
+    where: {
+      sessionId_clientTurnId: {
+        sessionId: session.id,
+        clientTurnId: params.clientTurnId,
+      },
+    },
+  });
+
+  if (responseMode === "finalize") {
+    if (!existingTurn) {
+      throw new VoiceServiceError(
+        "turn_not_found",
+        404,
+        false,
+        "Turn not found for finalize."
+      );
+    }
+
+    if (existingTurn.responseJson) {
+      return { status: 200, body: existingTurn.responseJson };
+    }
+    const finalized = await finalizeVoiceTurn({
+      session,
+      user: params.user,
+      turn: existingTurn,
+      transcript: existingTurn.userTranscriptText,
+      sttLatencyMs: existingTurn.sttLatencyMs ?? 0,
+    });
+    return { status: 200, body: finalized };
+  }
+
+  if (!params.audio || !params.mimeType) {
+    throw new VoiceServiceError(
+      "validation_error",
+      400,
+      false,
+      "audio file is required."
+    );
+  }
   if (!ACCEPTED_AUDIO_MIME_TYPES.has(params.mimeType)) {
     throw new VoiceServiceError(
       "unsupported_media_type",
@@ -369,28 +721,39 @@ export async function processVoiceTurn(params: {
     );
   }
 
-  const session = await ensureSessionActive(
-    await loadSessionOrThrow(params.sessionId, params.user.id)
-  );
-
   const requestHash = hashObject({
     sessionId: params.sessionId,
     clientTurnId: params.clientTurnId,
+    responseMode,
     locale: params.locale ?? null,
     audioDurationMs: params.audioDurationMs ?? null,
     audioHash: hashBuffer(params.audio),
   });
 
-  const existingTurn = await prisma.voiceTurn.findUnique({
-    where: {
-      sessionId_clientTurnId: {
-        sessionId: session.id,
-        clientTurnId: params.clientTurnId,
-      },
-    },
-  });
-
   if (existingTurn) {
+    if (!existingTurn.responseJson) {
+      if (responseMode === "staged" && existingTurn.requestHash === requestHash) {
+        const replayBody = makePendingTurnBody({
+          session,
+          turnId: existingTurn.id,
+          turnIndex: existingTurn.turnIndex,
+          clientTurnId: existingTurn.clientTurnId,
+          transcript: existingTurn.userTranscriptText,
+          expiresAt: session.expiresAt,
+        });
+        return { status: 200, body: replayBody };
+      }
+
+      if (responseMode === "final") {
+        throw new VoiceServiceError(
+          "turn_pending_finalize",
+          409,
+          false,
+          "Turn is pending finalization. Call /turn with responseMode=finalize."
+        );
+      }
+    }
+
     if (existingTurn.requestHash !== requestHash) {
       throw new VoiceServiceError(
         "idempotency_conflict",
@@ -415,188 +778,52 @@ export async function processVoiceTurn(params: {
     where: { sessionId: session.id },
   });
   const turnIndex = currentTurnCount + 1;
-  const promptText =
-    session.flow === "FIRST_REFLECTION"
-      ? session.promptText ?? "Voice reflection"
-      : "Voice onboarding conversation";
-
-  const safetyGate = await runSafetyGate({
-    promptText,
-    responseText: transcribed.text,
-  });
-
-  let assistantText: string;
-  let readyToEnd: boolean;
-  let draftToSave: unknown = session.draft;
-  let safetyPayload: SafetyPayload;
-  let llmLatencyMs = 0;
-
-  if (safetyGate.flagged) {
-    const safeResponse = getSafetyResponse();
-    assistantText = safeResponse.message;
-    readyToEnd = true;
-    safetyPayload = {
-      flagged: true,
-      reason: safetyGate.reason,
-      safeResponse,
-    };
-  } else if (session.flow === "ONBOARDING") {
-    let onboardingPromptBinding: VoicePromptBinding;
-    try {
-      onboardingPromptBinding = resolveOnboardingPromptBinding({
-        promptKey: session.promptId,
-        promptVersion: session.promptText,
-      });
-    } catch {
-      throw new VoiceServiceError(
-        "internal_error",
-        500,
-        true,
-        "Onboarding prompt binding is invalid."
-      );
-    }
-
-    const historyTurns = await prisma.voiceTurn.findMany({
-      where: { sessionId: session.id },
-      orderBy: { turnIndex: "desc" },
-      take: 6,
-      select: {
-        userTranscriptText: true,
-        assistantText: true,
-      },
-    });
-    const history = historyTurns
-      .reverse()
-      .map((turn) => ({
-        userTranscript: turn.userTranscriptText,
-        assistantText: turn.assistantText,
-      }));
-
-    const llmStartedAt = Date.now();
-    const onboardingResult = await runOnboardingTurn({
-      transcript: transcribed.text,
-      draft: parseOnboardingDraft(session.draft),
-      promptTemplatePath: onboardingPromptBinding.templatePath,
-      history,
-      profile: {
-        name: params.user.displayName ?? null,
-        ageRange: "unknown",
-        sex: "unknown",
-      },
-    });
-    llmLatencyMs = Date.now() - llmStartedAt;
-    draftToSave = onboardingResult.draft;
-    if (onboardingResult.safetyFlag) {
-      const safeResponse = getSafetyResponse();
-      assistantText = safeResponse.message;
-      readyToEnd = true;
-      safetyPayload = {
-        flagged: true,
-        reason: "self_harm",
-        safeResponse,
-      };
-    } else {
-      assistantText = onboardingResult.assistantText;
-      readyToEnd = onboardingResult.readyToEnd;
-      safetyPayload = {
-        flagged: false,
-        reason: "none",
-        safeResponse: null,
-      };
-    }
-  } else {
-    const llmStartedAt = Date.now();
-    const coach = await runRubricCoach({
-      promptText,
-      responseText: transcribed.text,
-    });
-    llmLatencyMs = Date.now() - llmStartedAt;
-    assistantText = coach.coachText;
-    readyToEnd = true;
-    safetyPayload = {
-      flagged: false,
-      reason: "none",
-      safeResponse: null,
-    };
-  }
-
-  const tts = await synthesizeWithElevenlabs({
-    text: assistantText,
-    voiceId: session.ttsVoiceId,
-    blobPath: `voice/${params.user.id}/${session.id}/turn-${turnIndex}.mp3`,
-  });
-
   const newExpiresAt = getNextExpiry();
-  const createdTurn = await prisma.voiceTurn.create({
-    data: {
-      sessionId: session.id,
-      userId: params.user.id,
+
+  if (responseMode === "staged") {
+    const stagedTurn = await prisma.voiceTurn.create({
+      data: {
+        sessionId: session.id,
+        userId: params.user.id,
+        turnIndex,
+        clientTurnId: params.clientTurnId,
+        requestHash,
+        userTranscriptText: transcribed.text,
+        assistantText: "",
+        ttsAvailable: false,
+        sttLatencyMs: transcribed.latencyMs,
+      },
+    });
+
+    await prisma.voiceSession.update({
+      where: { id: session.id },
+      data: { expiresAt: newExpiresAt },
+    });
+
+    const stagedBody = makePendingTurnBody({
+      session,
+      turnId: stagedTurn.id,
       turnIndex,
       clientTurnId: params.clientTurnId,
+      transcript: transcribed.text,
+      expiresAt: newExpiresAt,
+    });
+    return { status: 200, body: stagedBody };
+  }
+
+  const finalized = await finalizeVoiceTurn({
+    session,
+    user: params.user,
+    turn: null,
+    transcript: transcribed.text,
+    sttLatencyMs: transcribed.latencyMs,
+    createInput: {
+      clientTurnId: params.clientTurnId,
       requestHash,
-      userTranscriptText: transcribed.text,
-      assistantText,
-      assistantAudioUrl: tts.audioUrl,
-      assistantAudioMimeType: tts.audioMimeType,
-      assistantAudioExpiresAt: tts.audioExpiresAt ? new Date(tts.audioExpiresAt) : null,
-      ttsAvailable: tts.ttsAvailable,
-      safetyFlagged: safetyPayload.flagged,
-      safetyReason: safetyPayload.reason,
-      safeResponse: safetyPayload.safeResponse
-        ? toJsonInput(safetyPayload.safeResponse)
-        : undefined,
-      sttLatencyMs: transcribed.latencyMs,
-      llmLatencyMs,
-      ttsLatencyMs: tts.latencyMs,
-      totalLatencyMs: transcribed.latencyMs + llmLatencyMs + tts.latencyMs,
+      turnIndex,
     },
   });
-
-  const body = {
-    session: {
-      id: session.id,
-      state: "active",
-      readyToEnd,
-      safetyFlagged: session.safetyFlagged || safetyPayload.flagged,
-      nextTurnIndex: turnIndex + 1,
-      expiresAt: newExpiresAt.toISOString(),
-    },
-    turn: {
-      id: createdTurn.id,
-      index: turnIndex,
-      clientTurnId: params.clientTurnId,
-      userTranscript: {
-        text: transcribed.text,
-      },
-      assistant: makeAssistantPayload(assistantText, tts),
-      safety: safetyPayload,
-    },
-  };
-
-  await prisma.$transaction([
-    prisma.voiceSession.update({
-      where: { id: session.id },
-      data: {
-        expiresAt: newExpiresAt,
-        draft: draftToSave ? toJsonInput(draftToSave) : undefined,
-        safetyFlagged: session.safetyFlagged || safetyPayload.flagged,
-        safetyReason: safetyPayload.flagged
-          ? safetyPayload.reason
-          : session.safetyReason,
-        safeResponse: safetyPayload.safeResponse
-          ? toJsonInput(safetyPayload.safeResponse)
-          : undefined,
-      },
-    }),
-    prisma.voiceTurn.update({
-      where: { id: createdTurn.id },
-      data: {
-        responseJson: toJsonInput(body),
-      },
-    }),
-  ]);
-
-  return { status: 200, body };
+  return { status: 200, body: finalized };
 }
 
 export async function endVoiceSession(params: {

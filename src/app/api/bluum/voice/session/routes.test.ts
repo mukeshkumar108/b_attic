@@ -146,6 +146,35 @@ describe("voice session API routes", () => {
     );
   });
 
+  it("POST /turn supports finalize mode without audio", async () => {
+    vi.mocked(processVoiceTurn).mockResolvedValue({
+      status: 200,
+      body: { session: { id: "vsn_1" }, turn: { id: "vturn_1" } },
+    });
+
+    const formData = new FormData();
+    formData.set("sessionId", "vsn_1");
+    formData.set("clientTurnId", "turn_1");
+    formData.set("responseMode", "finalize");
+
+    const request = new Request("http://localhost/api/bluum/voice/session/turn", {
+      method: "POST",
+      body: formData,
+    });
+
+    const response = await turnRoute(request as any);
+    expect(response.status).toBe(200);
+    expect(processVoiceTurn).toHaveBeenCalledWith(
+      expect.objectContaining({
+        sessionId: "vsn_1",
+        clientTurnId: "turn_1",
+        responseMode: "finalize",
+        audio: null,
+        mimeType: null,
+      })
+    );
+  });
+
   it("POST /end maps voice service errors", async () => {
     vi.mocked(endVoiceSession).mockRejectedValue(
       new VoiceServiceError(

@@ -4,6 +4,30 @@ import { requireVoiceUser } from "@/lib/auth/requireVoiceUser";
 import { VoiceServiceError, voiceErrorResponse } from "@/lib/voice/errors";
 import { processVoiceTurn } from "@/lib/voice/service";
 
+function parseResponseMode(
+  value: FormDataEntryValue | null
+): "final" | "staged" | "finalize" {
+  if (typeof value !== "string" || !value.trim()) {
+    return "final";
+  }
+
+  const normalized = value.trim().toLowerCase();
+  if (
+    normalized === "final" ||
+    normalized === "staged" ||
+    normalized === "finalize"
+  ) {
+    return normalized;
+  }
+
+  throw new VoiceServiceError(
+    "validation_error",
+    400,
+    false,
+    "responseMode must be one of: final, staged, finalize."
+  );
+}
+
 function parseOptionalInt(value: FormDataEntryValue | null): number | null {
   if (typeof value !== "string" || !value.trim()) {
     return null;
@@ -21,6 +45,7 @@ export async function POST(request: NextRequest) {
     const clientTurnId = formData.get("clientTurnId");
     const audio = formData.get("audio");
     const locale = formData.get("locale");
+    const responseMode = parseResponseMode(formData.get("responseMode"));
     const audioDurationMs = parseOptionalInt(formData.get("audioDurationMs"));
 
     if (typeof sessionId !== "string" || !sessionId.trim()) {
@@ -39,19 +64,27 @@ export async function POST(request: NextRequest) {
         false
       );
     }
-    if (!(audio instanceof File)) {
-      return voiceErrorResponse(400, "validation_error", "audio file is required.", false);
+    if (responseMode !== "finalize" && !(audio instanceof File)) {
+      return voiceErrorResponse(
+        400,
+        "validation_error",
+        "audio file is required.",
+        false
+      );
     }
 
-    const audioBuffer = Buffer.from(await audio.arrayBuffer());
+    const audioBuffer =
+      audio instanceof File ? Buffer.from(await audio.arrayBuffer()) : null;
     const result = await processVoiceTurn({
       user,
       sessionId: sessionId.trim(),
       clientTurnId: clientTurnId.trim(),
       audio: audioBuffer,
-      mimeType: audio.type || "application/octet-stream",
+      mimeType:
+        audio instanceof File ? audio.type || "application/octet-stream" : null,
       audioDurationMs,
       locale: typeof locale === "string" ? locale : null,
+      responseMode,
     });
 
     return NextResponse.json(result.body, { status: result.status });
