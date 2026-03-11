@@ -106,6 +106,14 @@ function parseOnboardingDraft(value: unknown): OnboardingDraft {
   };
 }
 
+function parseFirstReflectionPracticeMode(value: unknown): boolean {
+  if (!value || typeof value !== "object") {
+    return false;
+  }
+  const draft = value as Record<string, unknown>;
+  return draft.practiceMode === true;
+}
+
 function getBaseOnboardingDraft(user: User): OnboardingDraft {
   return {
     displayName: user.displayName ?? null,
@@ -337,14 +345,19 @@ export async function startVoiceSession(params: {
   user: User;
   flow: VoiceFlowInput;
   reflectionTrack?: ReflectionTrackInput | null;
+  practiceMode?: boolean | null;
   clientSessionId: string;
   dateLocal?: string | null;
   locale?: string | null;
   ttsVoiceId?: string | null;
 }): Promise<{ status: number; body: unknown }> {
+  const resolvedPracticeMode =
+    params.flow === "first_reflection" ? params.practiceMode !== false : false;
+
   const normalized = {
     flow: params.flow,
     reflectionTrack: params.reflectionTrack ?? null,
+    practiceMode: resolvedPracticeMode,
     dateLocal: params.dateLocal ?? null,
     locale: params.locale ?? null,
     ttsVoiceId: params.ttsVoiceId ?? null,
@@ -386,30 +399,36 @@ export async function startVoiceSession(params: {
   let promptId: string | null = null;
   let promptText: string | null = null;
   let dateLocal: string | null = null;
-  let draft: OnboardingDraft | null = null;
+  let onboardingDraft: OnboardingDraft | null = null;
+  let sessionDraft: unknown = undefined;
 
   if (dbFlow === "FIRST_REFLECTION") {
-    if (params.dateLocal && !validateDateLocal(params.dateLocal)) {
-      throw new VoiceServiceError(
-        "validation_error",
-        400,
-        false,
-        "Invalid dateLocal format (expected YYYY-MM-DD)."
-      );
+    if (resolvedPracticeMode) {
+      dateLocal = null;
+      sessionDraft = { practiceMode: true };
+    } else {
+      if (params.dateLocal && !validateDateLocal(params.dateLocal)) {
+        throw new VoiceServiceError(
+          "validation_error",
+          400,
+          false,
+          "Invalid dateLocal format (expected YYYY-MM-DD)."
+        );
+      }
+      dateLocal = ensureDateLocal(params.dateLocal, params.user.timezone);
+      const existingReflection = await prisma.dailyReflection.findUnique({
+        where: { userId_dateLocal: { userId: params.user.id, dateLocal } },
+      });
+      if (existingReflection) {
+        throw new VoiceServiceError(
+          "reflection_exists",
+          409,
+          false,
+          "Reflection already exists for this date."
+        );
+      }
+      await getOrCreateDailyStatus(params.user.id, dateLocal);
     }
-    dateLocal = ensureDateLocal(params.dateLocal, params.user.timezone);
-    const existingReflection = await prisma.dailyReflection.findUnique({
-      where: { userId_dateLocal: { userId: params.user.id, dateLocal } },
-    });
-    if (existingReflection) {
-      throw new VoiceServiceError(
-        "reflection_exists",
-        409,
-        false,
-        "Reflection already exists for this date."
-      );
-    }
-    await getOrCreateDailyStatus(params.user.id, dateLocal);
     const reflectionPromptBinding = getFirstReflectionPromptBindingFromTrack(
       params.reflectionTrack
     );
@@ -418,7 +437,8 @@ export async function startVoiceSession(params: {
     promptId = reflectionPromptBinding.key;
     promptText = reflectionPromptBinding.version;
   } else {
-    draft = getBaseOnboardingDraft(params.user);
+    onboardingDraft = getBaseOnboardingDraft(params.user);
+    sessionDraft = onboardingDraft;
     const onboardingPromptBinding = getDefaultVoicePromptBinding(dbFlow);
     if (!onboardingPromptBinding) {
       throw new VoiceServiceError(
@@ -448,7 +468,7 @@ export async function startVoiceSession(params: {
       expiresAt,
       clientSessionId: params.clientSessionId,
       startRequestHash: requestHash,
-      draft: draft ? toJsonInput(draft) : undefined,
+      draft: sessionDraft !== undefined ? toJsonInput(sessionDraft) : undefined,
     },
   });
 
@@ -458,7 +478,7 @@ export async function startVoiceSession(params: {
       ? reflectionTrack === "core"
         ? REFLECTION_CORE_HANDSHAKE_TEXT
         : FIRST_REFLECTION_DAY0_HANDSHAKE_TEXT
-      : getOnboardingWelcomeText(draft ?? {});
+      : getOnboardingWelcomeText(onboardingDraft ?? {});
 
   let tts: AudioPayloadLike;
   if (dbFlow === "ONBOARDING") {
@@ -501,6 +521,7 @@ export async function startVoiceSession(params: {
       expiresAt: session.expiresAt.toISOString(),
       nextTurnIndex: 1,
       readyToEnd: false,
+      practiceMode: dbFlow === "FIRST_REFLECTION" ? resolvedPracticeMode : null,
     },
     assistant: makeAssistantPayload(assistantText, tts),
   };
@@ -1111,6 +1132,12 @@ export async function endVoiceSession(params: {
 
   if (commit) {
     if (session.flow === "FIRST_REFLECTION") {
+      if (parseFirstReflectionPracticeMode(session.draft)) {
+        result = {
+          reflection: null,
+          onboarding: null,
+        };
+      } else {
       const turns = await prisma.voiceTurn.findMany({
         where: { sessionId: session.id },
         orderBy: { turnIndex: "asc" },
@@ -1149,6 +1176,7 @@ export async function endVoiceSession(params: {
         }),
         onboarding: null,
       };
+      }
     } else {
       const draft = parseOnboardingDraft(session.draft);
       if (!isOnboardingComplete(draft)) {

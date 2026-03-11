@@ -37,7 +37,7 @@ Base URL: `http://localhost:3000/api/bluum/voice/session`
 - Same payload hash: return `200` and replay full previously stored response
 - Different payload hash: return `409` with `error.code = "idempotency_conflict"`
 - Duplicate `clientSessionId` behavior for `/start`:
-- Same normalized request (`flow`, `dateLocal`, `locale`, `ttsVoiceId`): return `200` and replay full previously stored response
+- Same normalized request (`flow`, `reflectionTrack`, `practiceMode`, `dateLocal`, `locale`, `ttsVoiceId`): return `200` and replay full previously stored response
 - Different normalized request for same `clientSessionId` (including different `flow`): return `409` with `error.code = "idempotency_conflict"`
 - Duplicate `clientEndId` behavior for `/end`: return `200` and replay full previously stored response (identical payload)
 - Session TTL: 20 minutes
@@ -60,6 +60,8 @@ Request body:
 ```json
 {
   "flow": "first_reflection",
+  "reflectionTrack": "core",
+  "practiceMode": true,
   "clientSessionId": "8f131fd3-a0f5-4e73-bfdd-73dc8ec67b61",
   "dateLocal": "2026-03-10",
   "locale": "en-US",
@@ -69,6 +71,10 @@ Request body:
 
 Fields:
 - `flow` required, enum: `onboarding | first_reflection`
+- `reflectionTrack` optional for `first_reflection`, enum: `day0 | core`
+- `practiceMode` optional boolean
+- `practiceMode` default behavior for `first_reflection`: `true` unless explicitly set to `false`
+- `practiceMode=true` behavior: allows repeat test sessions without `reflection_exists` blocking and disables reflection persistence on `/end`
 - `clientSessionId` required (UUID, idempotency key)
 - `dateLocal` optional (`YYYY-MM-DD`, mainly for `first_reflection`)
 - `locale` optional
@@ -81,8 +87,10 @@ Success response (`201`, or `200` on idempotent replay):
   "session": {
     "id": "vsn_123",
     "flow": "first_reflection",
+    "reflectionTrack": "core",
+    "practiceMode": true,
     "state": "active",
-    "dateLocal": "2026-03-10",
+    "dateLocal": null,
     "expiresAt": "2026-03-10T10:20:00.000Z",
     "nextTurnIndex": 1,
     "readyToEnd": false
@@ -263,6 +271,7 @@ Fields:
 `commit` behavior:
 - `commit=true` (default): persist final flow outcome (reflection for `first_reflection`, profile updates for `onboarding`)
 - `commit=false`: end/discard session only; for `first_reflection` specifically, no reflection write and no streak mutation
+- For `first_reflection` with `practiceMode=true`: no reflection write and no streak mutation regardless of `commit`
 
 Idempotency behavior:
 - Duplicate `clientEndId` with same normalized request returns `200` and replays the exact prior response payload

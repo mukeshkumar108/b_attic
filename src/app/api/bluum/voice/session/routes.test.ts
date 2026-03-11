@@ -81,6 +81,35 @@ describe("voice session API routes", () => {
     );
   });
 
+  it("POST /start forwards practiceMode when provided", async () => {
+    vi.mocked(startVoiceSession).mockResolvedValue({
+      status: 201,
+      body: { session: { id: "vsn_1" } },
+    });
+
+    const request = new Request("http://localhost/api/bluum/voice/session/start", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        flow: "first_reflection",
+        reflectionTrack: "day0",
+        practiceMode: true,
+        clientSessionId: "c3",
+      }),
+    });
+
+    const response = await startRoute(request as any);
+    expect(response.status).toBe(201);
+    expect(startVoiceSession).toHaveBeenCalledWith(
+      expect.objectContaining({
+        flow: "first_reflection",
+        reflectionTrack: "day0",
+        practiceMode: true,
+        clientSessionId: "c3",
+      })
+    );
+  });
+
   it("POST /start validates request body", async () => {
     const request = new Request("http://localhost/api/bluum/voice/session/start", {
       method: "POST",
