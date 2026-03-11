@@ -32,8 +32,9 @@ export async function transcribeWithLemonfox(params: {
   const blob = new Blob([new Uint8Array(params.audio)], { type: params.mimeType });
   formData.append("file", blob, `turn-audio.${extension}`);
   formData.append("model", model);
-  if (params.locale) {
-    formData.append("language", params.locale);
+  const normalizedLanguage = normalizeLanguage(params.locale);
+  if (normalizedLanguage) {
+    formData.append("language", normalizedLanguage);
   }
 
   let response: Response;
@@ -143,4 +144,23 @@ async function safeReadText(response: Response): Promise<string | null> {
   } catch {
     return null;
   }
+}
+
+function normalizeLanguage(locale?: string): string | null {
+  if (!locale) {
+    return null;
+  }
+
+  const trimmed = locale.trim();
+  if (!trimmed) {
+    return null;
+  }
+
+  // Lemonfox STT expects a language code like "en", not region locales like "en-US".
+  const base = trimmed.split(/[-_]/)[0]?.toLowerCase();
+  if (!base || !/^[a-z]{2,3}$/.test(base)) {
+    return null;
+  }
+
+  return base;
 }
