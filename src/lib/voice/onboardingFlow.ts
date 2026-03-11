@@ -1,15 +1,12 @@
 import { z } from "zod";
 import {
   callOpenRouterWithOptions,
-  loadPromptMd,
+  loadPromptMdStrict,
   parseJsonWithZod,
 } from "@/lib/llm/openrouter";
 
 const TIMEZONE_REGEX = /^[A-Za-z_]+\/[A-Za-z_]+$/;
 const TIME_LOCAL_REGEX = /^\d{2}:\d{2}$/;
-const VOICE_ONBOARDING_PROMPT_PATH =
-  "src/lib/llm/prompts/voice_onboarding_welcome_v4.md";
-
 const OnboardingLLMStateSchema = z.object({
   session_complete: z.boolean(),
   safety_flag: z.boolean(),
@@ -49,6 +46,7 @@ export function getOnboardingWelcomeText(draft: OnboardingDraft): string {
 export async function runOnboardingTurn(params: {
   transcript: string;
   draft: OnboardingDraft;
+  promptTemplatePath: string;
   history?: Array<{ userTranscript: string; assistantText: string }>;
   profile?: {
     name?: string | null;
@@ -59,6 +57,7 @@ export async function runOnboardingTurn(params: {
   const llmResult = await tryLLMOnboarding({
     transcript: params.transcript,
     draft: params.draft,
+    promptTemplatePath: params.promptTemplatePath,
     history: params.history ?? [],
     profile: params.profile,
   });
@@ -179,6 +178,7 @@ export function sanitizeOnboardingReplyForSpeech(text: string): string {
 async function tryLLMOnboarding(params: {
   transcript: string;
   draft: OnboardingDraft;
+  promptTemplatePath: string;
   history: Array<{ userTranscript: string; assistantText: string }>;
   profile?: {
     name?: string | null;
@@ -186,7 +186,7 @@ async function tryLLMOnboarding(params: {
     sex?: string | null;
   };
 }): Promise<{ reply: string; state: z.infer<typeof OnboardingLLMStateSchema> } | null> {
-  const corePrompt = loadPromptMd(VOICE_ONBOARDING_PROMPT_PATH);
+  const corePrompt = loadPromptMdStrict(params.promptTemplatePath);
   const runtimeContext = [
     "",
     "SESSION CONTEXT",

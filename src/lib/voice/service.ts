@@ -21,8 +21,14 @@ import {
   runOnboardingTurn,
   type OnboardingDraft,
 } from "@/lib/voice/onboardingFlow";
+import {
+  getDefaultVoicePromptBinding,
+  resolveOnboardingPromptBinding,
+  type VoicePromptBinding,
+} from "@/lib/voice/promptRegistry";
 import { synthesizeWithElevenlabs } from "@/lib/voice/providers/elevenlabs";
 import { transcribeWithLemonfox } from "@/lib/voice/providers/lemonfox";
+import { loadPromptMdStrict } from "@/lib/llm/openrouter";
 
 export type VoiceFlowInput = "onboarding" | "first_reflection";
 
@@ -251,6 +257,20 @@ export async function startVoiceSession(params: {
     promptText = status.promptText;
   } else {
     draft = getBaseOnboardingDraft(params.user);
+    const onboardingPromptBinding = getDefaultVoicePromptBinding(dbFlow);
+    if (!onboardingPromptBinding) {
+      throw new VoiceServiceError(
+        "internal_error",
+        500,
+        true,
+        "Onboarding prompt is not configured."
+      );
+    }
+
+    // Validate prompt template at session start so turn processing never runs prompt-less.
+    loadPromptMdStrict(onboardingPromptBinding.templatePath);
+    promptId = onboardingPromptBinding.key;
+    promptText = onboardingPromptBinding.version;
   }
 
   const session = await prisma.voiceSession.create({
@@ -395,7 +415,10 @@ export async function processVoiceTurn(params: {
     where: { sessionId: session.id },
   });
   const turnIndex = currentTurnCount + 1;
-  const promptText = session.promptText ?? "Voice onboarding";
+  const promptText =
+    session.flow === "FIRST_REFLECTION"
+      ? session.promptText ?? "Voice reflection"
+      : "Voice onboarding conversation";
 
   const safetyGate = await runSafetyGate({
     promptText,
@@ -418,6 +441,21 @@ export async function processVoiceTurn(params: {
       safeResponse,
     };
   } else if (session.flow === "ONBOARDING") {
+    let onboardingPromptBinding: VoicePromptBinding;
+    try {
+      onboardingPromptBinding = resolveOnboardingPromptBinding({
+        promptKey: session.promptId,
+        promptVersion: session.promptText,
+      });
+    } catch {
+      throw new VoiceServiceError(
+        "internal_error",
+        500,
+        true,
+        "Onboarding prompt binding is invalid."
+      );
+    }
+
     const historyTurns = await prisma.voiceTurn.findMany({
       where: { sessionId: session.id },
       orderBy: { turnIndex: "desc" },
@@ -438,6 +476,7 @@ export async function processVoiceTurn(params: {
     const onboardingResult = await runOnboardingTurn({
       transcript: transcribed.text,
       draft: parseOnboardingDraft(session.draft),
+      promptTemplatePath: onboardingPromptBinding.templatePath,
       history,
       profile: {
         name: params.user.displayName ?? null,

@@ -309,6 +309,19 @@ export function loadPromptMd(templatePath: string): string {
 }
 
 /**
+ * Load a markdown prompt template from disk only.
+ * Use this when prompt fidelity/version-locking is required.
+ */
+export function loadPromptMdStrict(templatePath: string): string {
+  const fullPath = path.join(process.cwd(), templatePath);
+  try {
+    return fs.readFileSync(fullPath, "utf-8");
+  } catch {
+    throw new Error(`Prompt template not found: ${templatePath}`);
+  }
+}
+
+/**
  * Fill template placeholders.
  */
 export function fillTemplate(
