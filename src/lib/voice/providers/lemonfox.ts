@@ -26,10 +26,11 @@ export async function transcribeWithLemonfox(params: {
   const start = Date.now();
   const url = env.LEMONFOX_API_URL ?? DEFAULT_LEMONFOX_API_URL;
   const model = env.LEMONFOX_STT_MODEL ?? "whisper-1";
+  const extension = getExtensionForMime(params.mimeType);
 
   const formData = new FormData();
   const blob = new Blob([new Uint8Array(params.audio)], { type: params.mimeType });
-  formData.append("file", blob, "turn-audio");
+  formData.append("file", blob, `turn-audio.${extension}`);
   formData.append("model", model);
   if (params.locale) {
     formData.append("language", params.locale);
@@ -54,6 +55,30 @@ export async function transcribeWithLemonfox(params: {
   }
 
   if (!response.ok) {
+    const errorText = await safeReadText(response);
+    console.error("Lemonfox STT non-OK response:", {
+      status: response.status,
+      body: errorText?.slice(0, 500) ?? "",
+    });
+
+    if (response.status === 429) {
+      throw new VoiceServiceError(
+        "rate_limited",
+        429,
+        true,
+        "Speech service is rate limited. Please try again."
+      );
+    }
+
+    if (response.status === 401 || response.status === 403) {
+      throw new VoiceServiceError(
+        "stt_provider_error",
+        503,
+        false,
+        "Speech provider authentication failed."
+      );
+    }
+
     throw new VoiceServiceError(
       "stt_provider_error",
       503,
@@ -92,4 +117,30 @@ export async function transcribeWithLemonfox(params: {
     text,
     latencyMs: Date.now() - start,
   };
+}
+
+function getExtensionForMime(mimeType: string): string {
+  switch (mimeType.toLowerCase()) {
+    case "audio/mp4":
+    case "audio/x-m4a":
+    case "audio/m4a":
+      return "m4a";
+    case "audio/mpeg":
+      return "mp3";
+    case "audio/wav":
+    case "audio/x-wav":
+      return "wav";
+    case "audio/webm":
+      return "webm";
+    default:
+      return "bin";
+  }
+}
+
+async function safeReadText(response: Response): Promise<string | null> {
+  try {
+    return await response.text();
+  } catch {
+    return null;
+  }
 }
