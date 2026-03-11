@@ -12,6 +12,12 @@ const ONBOARDING_WELCOME_V4: VoicePromptBinding = {
   templatePath: "src/lib/llm/prompts/voice_onboarding_welcome_v4.md",
 };
 
+const ONBOARDING_WELCOME_V5: VoicePromptBinding = {
+  key: "voice_onboarding_welcome",
+  version: "v5",
+  templatePath: "src/lib/llm/prompts/voice_onboarding_welcome_v5.md",
+};
+
 const FIRST_REFLECTION_DAY0_V1: VoicePromptBinding = {
   key: "voice_first_reflection_day0",
   version: "v1",
@@ -25,6 +31,8 @@ const FIRST_REFLECTION_CORE_V1: VoicePromptBinding = {
 };
 
 const ONBOARDING_PROMPT_MAP: Record<string, VoicePromptBinding> = {
+  [`${ONBOARDING_WELCOME_V5.key}:${ONBOARDING_WELCOME_V5.version}`]:
+    ONBOARDING_WELCOME_V5,
   [`${ONBOARDING_WELCOME_V4.key}:${ONBOARDING_WELCOME_V4.version}`]:
     ONBOARDING_WELCOME_V4,
 };
@@ -40,7 +48,7 @@ export function getDefaultVoicePromptBinding(
   flow: VoiceFlow
 ): VoicePromptBinding | null {
   if (flow === "ONBOARDING") {
-    return ONBOARDING_WELCOME_V4;
+    return ONBOARDING_WELCOME_V5;
   }
   if (flow === "FIRST_REFLECTION") {
     return FIRST_REFLECTION_DAY0_V1;
@@ -69,7 +77,7 @@ export function resolveOnboardingPromptBinding(params: {
   const promptVersion = params.promptVersion?.trim() ?? "";
 
   if (!promptKey || !promptVersion) {
-    return ONBOARDING_WELCOME_V4;
+    return ONBOARDING_WELCOME_V5;
   }
 
   const resolved = ONBOARDING_PROMPT_MAP[`${promptKey}:${promptVersion}`];

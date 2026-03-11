@@ -11,8 +11,8 @@ describe("voice prompt registry", () => {
     const binding = getDefaultVoicePromptBinding("ONBOARDING");
     expect(binding).toEqual({
       key: "voice_onboarding_welcome",
-      version: "v4",
-      templatePath: "src/lib/llm/prompts/voice_onboarding_welcome_v4.md",
+      version: "v5",
+      templatePath: "src/lib/llm/prompts/voice_onboarding_welcome_v5.md",
     });
   });
 
@@ -31,7 +31,7 @@ describe("voice prompt registry", () => {
       promptVersion: null,
     });
     expect(binding.templatePath).toBe(
-      "src/lib/llm/prompts/voice_onboarding_welcome_v4.md"
+      "src/lib/llm/prompts/voice_onboarding_welcome_v5.md"
     );
   });
 

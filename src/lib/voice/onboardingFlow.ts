@@ -14,7 +14,7 @@ const OnboardingLLMStateSchema = z.object({
 });
 
 export const ONBOARDING_HANDSHAKE_TEXT =
-  "Welcome to Bluum. I'm really glad you're here. Most gratitude apps ask you to write lists of things you're grateful for every day. You write them and usually nothing really changes. Bluum works a little differently. Each evening we have a short conversation and find one real moment from your day, something small you might normally rush past. And we go back into it together and actually feel it again. That's the part that slowly rewires how your brain sees your day over time. Not the list, the feeling. Before we go any further, I'm curious, have you ever tried gratitude before? A journal, an app, anything like that?";
+  "Ashley. You just did something most people never do — you actually decided to do something about how you feel. That matters. So tell me — what brought you here today?";
 
 export interface OnboardingDraft {
   displayName?: string | null;

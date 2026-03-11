@@ -8,7 +8,7 @@ import {
 
 describe("onboardingFlow", () => {
   it("returns handshake text when display name is missing", () => {
-    expect(getOnboardingWelcomeText({})).toContain("Welcome to Bluum");
+    expect(getOnboardingWelcomeText({})).toContain("what brought you here today");
   });
 
   it("validates complete onboarding drafts", () => {
