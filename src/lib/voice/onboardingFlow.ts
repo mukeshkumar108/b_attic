@@ -14,7 +14,7 @@ const OnboardingLLMStateSchema = z.object({
 });
 
 export const ONBOARDING_HANDSHAKE_TEXT =
-  "Ashley. You just did something most people never do — you actually decided to do something about how you feel. That matters. So tell me — what brought you here today?";
+  "Welcome to Bluum. What you're starting today isn't just an app — it's a practice that can genuinely change how your brain works and how you experience your life. We're going to do that together, one evening at a time. So tell me — what brought you here today?";
 
 export interface OnboardingDraft {
   displayName?: string | null;
