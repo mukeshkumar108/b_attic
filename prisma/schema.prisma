@@ -24,6 +24,18 @@ enum CoachType {
   NUDGE
 }
 
+enum VoiceFlow {
+  ONBOARDING
+  FIRST_REFLECTION
+}
+
+enum VoiceSessionState {
+  ACTIVE
+  ENDED
+  EXPIRED
+  ABORTED
+}
+
 // ============================================================================
 // User (extended for Bluum)
 // ============================================================================
@@ -36,7 +48,7 @@ model User {
   timezone                    String?
   onboardingCompletedAt       DateTime?
   reflectionReminderEnabled   Boolean   @default(true)
-  reflectionReminderTimeLocal String?   // "HH:MM" format
+  reflectionReminderTimeLocal String? // "HH:MM" format
   createdAt                   DateTime  @default(now())
   updatedAt                   DateTime  @updatedAt
 
@@ -48,6 +60,8 @@ model User {
   moodLogs            MoodLog[]
   gratitudeMoments    GratitudeMoment[]
   userSummaries       UserSummary[]
+  voiceSessions       VoiceSession[]
+  voiceTurns          VoiceTurn[]
 }
 
 // ============================================================================
@@ -55,18 +69,18 @@ model User {
 // ============================================================================
 
 model DailyStatus {
-  id              String    @id @default(cuid())
-  userId          String
-  dateLocal       String    // YYYY-MM-DD
-  promptId        String
-  promptText      String
-  didSwapPrompt   Boolean   @default(false)
-  hasReflection   Boolean   @default(false)
-  hasMood         Boolean   @default(false)
-  reminderSentAt  DateTime?
-  followupSentAt  DateTime?
-  createdAt       DateTime  @default(now())
-  updatedAt       DateTime  @updatedAt
+  id             String    @id @default(cuid())
+  userId         String
+  dateLocal      String // YYYY-MM-DD
+  promptId       String
+  promptText     String
+  didSwapPrompt  Boolean   @default(false)
+  hasReflection  Boolean   @default(false)
+  hasMood        Boolean   @default(false)
+  reminderSentAt DateTime?
+  followupSentAt DateTime?
+  createdAt      DateTime  @default(now())
+  updatedAt      DateTime  @updatedAt
 
   user User @relation(fields: [userId], references: [id])
 
@@ -82,9 +96,9 @@ model DailyStatus {
 model PromptHistory {
   id        String   @id @default(cuid())
   userId    String
-  dateLocal String   // YYYY-MM-DD
+  dateLocal String // YYYY-MM-DD
   promptId  String
-  tagsUsed  Json     // string[]
+  tagsUsed  Json // string[]
   createdAt DateTime @default(now())
 
   user User @relation(fields: [userId], references: [id])
@@ -100,7 +114,7 @@ model PromptHistory {
 model DailyReflection {
   id           String    @id @default(cuid())
   userId       String
-  dateLocal    String    // YYYY-MM-DD
+  dateLocal    String // YYYY-MM-DD
   promptId     String
   promptText   String
   responseText String
@@ -122,7 +136,7 @@ model DailyReflection {
 model ReflectionAddendum {
   id        String   @id @default(cuid())
   userId    String
-  dateLocal String   // YYYY-MM-DD
+  dateLocal String // YYYY-MM-DD
   text      String
   createdAt DateTime @default(now())
 
@@ -139,9 +153,9 @@ model ReflectionAddendum {
 model MoodLog {
   id        String   @id @default(cuid())
   userId    String
-  dateLocal String   // YYYY-MM-DD
-  rating    Int      // 1-5
-  tags      Json?    // string[]
+  dateLocal String // YYYY-MM-DD
+  rating    Int // 1-5
+  tags      Json? // string[]
   note      String?
   createdAt DateTime @default(now())
 
@@ -175,14 +189,90 @@ model GratitudeMoment {
 model UserSummary {
   id               String   @id @default(cuid())
   userId           String
-  periodType       String   // "WEEKLY" | "MONTHLY"
-  periodStartLocal String   // YYYY-MM-DD
-  periodEndLocal   String   // YYYY-MM-DD
+  periodType       String // "WEEKLY" | "MONTHLY"
+  periodStartLocal String // YYYY-MM-DD
+  periodEndLocal   String // YYYY-MM-DD
   summaryText      String
   createdAt        DateTime @default(now())
 
   user User @relation(fields: [userId], references: [id])
 
   @@unique([userId, periodType, periodStartLocal])
+  @@index([userId])
+}
+
+// ============================================================================
+// Voice Session - tracks turn-based STT -> LLM -> TTS conversations
+// ============================================================================
+
+model VoiceSession {
+  id                String            @id @default(cuid())
+  userId            String
+  flow              VoiceFlow
+  state             VoiceSessionState @default(ACTIVE)
+  dateLocal         String? // YYYY-MM-DD (first_reflection flow)
+  promptId          String?
+  promptText        String?
+  locale            String?
+  ttsVoiceId        String?
+  expiresAt         DateTime
+  endedAt           DateTime?
+  safetyFlagged     Boolean           @default(false)
+  safetyReason      String?
+  safeResponse      Json?
+  draft             Json?
+  result            Json?
+  clientSessionId   String
+  startRequestHash  String
+  startResponseJson Json?
+  endClientId       String?
+  endRequestHash    String?
+  endResponseJson   Json?
+  createdAt         DateTime          @default(now())
+  updatedAt         DateTime          @updatedAt
+
+  user  User        @relation(fields: [userId], references: [id])
+  turns VoiceTurn[]
+
+  @@unique([userId, clientSessionId])
+  @@index([userId])
+  @@index([userId, state])
+  @@index([expiresAt])
+}
+
+// ============================================================================
+// Voice Turn - stores transcripts and generated assistant output per turn
+// ============================================================================
+
+model VoiceTurn {
+  id                      String    @id @default(cuid())
+  sessionId               String
+  userId                  String
+  turnIndex               Int
+  clientTurnId            String
+  requestHash             String
+  responseJson            Json?
+  userTranscriptText      String
+  assistantText           String
+  assistantAudioUrl       String?
+  assistantAudioMimeType  String?
+  assistantAudioExpiresAt DateTime?
+  ttsAvailable            Boolean   @default(false)
+  safetyFlagged           Boolean   @default(false)
+  safetyReason            String?
+  safeResponse            Json?
+  sttLatencyMs            Int?
+  llmLatencyMs            Int?
+  ttsLatencyMs            Int?
+  totalLatencyMs          Int?
+  createdAt               DateTime  @default(now())
+  updatedAt               DateTime  @updatedAt
+
+  session VoiceSession @relation(fields: [sessionId], references: [id])
+  user    User         @relation(fields: [userId], references: [id])
+
+  @@unique([sessionId, turnIndex])
+  @@unique([sessionId, clientTurnId])
+  @@index([sessionId])
   @@index([userId])
 }
