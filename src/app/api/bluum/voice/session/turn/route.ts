@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
-import { requireUser, AuthError } from "@/lib/auth/requireUser";
+import { AuthError } from "@/lib/auth/requireUser";
+import { requireVoiceUser } from "@/lib/auth/requireVoiceUser";
 import { VoiceServiceError, voiceErrorResponse } from "@/lib/voice/errors";
 import { processVoiceTurn } from "@/lib/voice/service";
 
@@ -13,7 +14,7 @@ function parseOptionalInt(value: FormDataEntryValue | null): number | null {
 
 export async function POST(request: NextRequest) {
   try {
-    const { user } = await requireUser();
+    const { user } = await requireVoiceUser(request);
     const formData = await request.formData();
 
     const sessionId = formData.get("sessionId");

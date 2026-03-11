@@ -30,6 +30,8 @@ const envSchema = z
     VOICE_TTS_AUDIO_URL_TTL_SECONDS: z.coerce.number().int().positive().optional(),
     VOICE_MAX_AUDIO_BYTES: z.coerce.number().int().positive().optional(),
     VOICE_MAX_AUDIO_MS: z.coerce.number().int().positive().optional(),
+    VOICE_TEST_API_KEY: z.string().min(1).optional(),
+    VOICE_TEST_USER_ID: z.string().min(1).optional(),
   })
   .superRefine((value, ctx) => {
     if (value.NODE_ENV === "production") {
@@ -47,6 +49,17 @@ const envSchema = z
           message: "CLERK_AUTHORIZED_PARTIES is required in production",
         });
       }
+    }
+
+    const hasVoiceTestApiKey = Boolean(value.VOICE_TEST_API_KEY);
+    const hasVoiceTestUserId = Boolean(value.VOICE_TEST_USER_ID);
+    if (hasVoiceTestApiKey !== hasVoiceTestUserId) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["VOICE_TEST_API_KEY"],
+        message:
+          "VOICE_TEST_API_KEY and VOICE_TEST_USER_ID must be set together",
+      });
     }
   });
 

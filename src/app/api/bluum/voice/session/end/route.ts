@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
-import { requireUser, AuthError } from "@/lib/auth/requireUser";
+import { AuthError } from "@/lib/auth/requireUser";
+import { requireVoiceUser } from "@/lib/auth/requireVoiceUser";
 import { VoiceServiceError, voiceErrorResponse } from "@/lib/voice/errors";
 import { endVoiceSession } from "@/lib/voice/service";
 
@@ -13,7 +14,7 @@ const endSchema = z.object({
 
 export async function POST(request: NextRequest) {
   try {
-    const { user } = await requireUser();
+    const { user } = await requireVoiceUser(request);
     const body = await request.json();
     const parsed = endSchema.safeParse(body);
     if (!parsed.success) {
