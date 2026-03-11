@@ -99,12 +99,14 @@ Every response contains two parts.
 REPLY:
 [natural spoken message]
 STATE:
-json{
-  "stage": "explore | relive | land",
-  "moment_detected": true | false,
+```json
+{
+  "stage": "explore",
+  "moment_detected": false,
   "session_complete": false,
   "safety_flag": false
 }
+```
 
 ## SAFETY
 If the user expresses serious distress, crisis, or inability to cope:

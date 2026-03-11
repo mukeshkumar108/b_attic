@@ -6,7 +6,7 @@ import {
 
 describe("reflectionCoreFlow", () => {
   it("provides core reflection handshake text", () => {
-    expect(REFLECTION_CORE_HANDSHAKE_TEXT).toContain("Welcome back");
+    expect(REFLECTION_CORE_HANDSHAKE_TEXT).toContain("You showed up again");
   });
 
   it("strips STATE blocks with json{...} marker from speakable reply", () => {

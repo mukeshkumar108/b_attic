@@ -12,7 +12,7 @@ const ReflectionCoreLLMStateSchema = z.object({
 });
 
 export const REFLECTION_CORE_HANDSHAKE_TEXT =
-  "Welcome back. Let's reflect on one meaningful moment from your day. Start with whatever stands out most right now.";
+  "You showed up again. I love that about you! So go on. Tell me about today. Good, bad, or somewhere in the middle?";
 
 export interface ReflectionCoreTurnResult {
   assistantText: string;
@@ -106,6 +106,15 @@ export async function runReflectionCoreTurn(params: {
   };
 }): Promise<ReflectionCoreTurnResult> {
   const corePrompt = loadPromptMdStrict(params.promptTemplatePath);
+  const history = params.history ?? [];
+  const openingMessageContext =
+    history.length === 0
+      ? [
+          "",
+          "OPENING MESSAGE USER HEARD:",
+          REFLECTION_CORE_HANDSHAKE_TEXT,
+        ]
+      : [];
   const runtimeContext = [
     "",
     "SESSION CONTEXT",
@@ -113,9 +122,10 @@ export async function runReflectionCoreTurn(params: {
     `Name: ${params.profile?.name || "unknown"}`,
     `Age range: ${params.profile?.ageRange || "unknown"}`,
     `Sex: ${params.profile?.sex || "unknown"}`,
+    ...openingMessageContext,
     "",
     "CONVERSATION SO FAR",
-    formatConversationHistory(params.history ?? []),
+    formatConversationHistory(history),
     "",
     "USER TRANSCRIPT:",
     `User: ${params.transcript}`,
