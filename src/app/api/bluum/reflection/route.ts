@@ -1,7 +1,7 @@
 /**
  * POST /api/bluum/reflection
  * Submit a daily gratitude reflection.
- * Write-once: returns 409 if reflection exists for dateLocal.
+ * Same-day rewrites are allowed: latest submission replaces prior text/coaching.
  */
 
 import { NextRequest, NextResponse } from "next/server";
@@ -48,25 +48,21 @@ export async function POST(request: NextRequest) {
 
     const dateLocal = ensureDateLocal(dateLocalParam, user.timezone);
 
-    // Check if reflection already exists (write-once)
+    // Same-day rewrites are allowed.
     const existingReflection = await prisma.dailyReflection.findUnique({
       where: { userId_dateLocal: { userId: user.id, dateLocal } },
     });
 
-    if (existingReflection) {
-      return errorResponse(
-        "Reflection already exists for this date. Reflections cannot be edited.",
-        409
-      );
-    }
-
     // Ensure DailyStatus exists
     const { status } = await getOrCreateDailyStatus(user.id, dateLocal);
 
-    // Get total reflections for milestone check
-    const totalReflections = await prisma.dailyReflection.count({
+    // For rewrite submissions, preserve total-reflection milestone semantics.
+    const totalReflectionsRaw = await prisma.dailyReflection.count({
       where: { userId: user.id },
     });
+    const totalReflectionsBeforeSave = existingReflection
+      ? Math.max(totalReflectionsRaw - 1, 0)
+      : totalReflectionsRaw;
 
     // Get current streak for success message
     const streakData = await computeCurrentStreak(user.id, dateLocal);
@@ -78,12 +74,20 @@ export async function POST(request: NextRequest) {
     });
 
     if (safetyResult.flagged) {
-      // Save reflection but with no coaching
+      // Save/update reflection but with no coaching
       await prisma.$transaction([
-        prisma.dailyReflection.create({
-          data: {
+        prisma.dailyReflection.upsert({
+          where: { userId_dateLocal: { userId: user.id, dateLocal } },
+          create: {
             userId: user.id,
             dateLocal,
+            promptId: status.promptId,
+            promptText: status.promptText,
+            responseText,
+            coachType: "NONE",
+            coachText: null,
+          },
+          update: {
             promptId: status.promptId,
             promptText: status.promptText,
             responseText,
@@ -115,12 +119,20 @@ export async function POST(request: NextRequest) {
       responseText,
     });
 
-    // Save reflection with coaching
+    // Save/update reflection with coaching
     await prisma.$transaction([
-      prisma.dailyReflection.create({
-        data: {
+      prisma.dailyReflection.upsert({
+        where: { userId_dateLocal: { userId: user.id, dateLocal } },
+        create: {
           userId: user.id,
           dateLocal,
+          promptId: status.promptId,
+          promptText: status.promptText,
+          responseText,
+          coachType: coachResult.coachType,
+          coachText: coachResult.coachText,
+        },
+        update: {
           promptId: status.promptId,
           promptText: status.promptText,
           responseText,
@@ -137,7 +149,7 @@ export async function POST(request: NextRequest) {
     // Get success message
     const successMessage = getSuccessMessage({
       currentStreak: streakData.currentStreak,
-      totalReflections,
+      totalReflections: totalReflectionsBeforeSave,
       userId: user.id,
       dateLocal,
     });

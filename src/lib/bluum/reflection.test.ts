@@ -17,18 +17,17 @@ import { selectPromptForDate } from "./promptPolicy";
 import { PROMPTS } from "./prompts";
 
 describe("Reflection Business Logic", () => {
-  describe("Write-once policy", () => {
-    it("should reject if reflection already exists", () => {
-      // Simulates the 409 check in reflection route
+  describe("Same-day rewrite policy", () => {
+    it("allows rewrite if reflection already exists for the day", () => {
       const existingReflection = { id: "existing", dateLocal: "2024-03-15" };
-      const shouldReject = existingReflection !== null;
-      expect(shouldReject).toBe(true);
+      const shouldAllowRewrite = existingReflection !== null;
+      expect(shouldAllowRewrite).toBe(true);
     });
 
-    it("should allow if no reflection exists", () => {
+    it("allows first save if no reflection exists", () => {
       const existingReflection = null;
-      const shouldReject = existingReflection !== null;
-      expect(shouldReject).toBe(false);
+      const shouldAllowFirstSave = existingReflection === null;
+      expect(shouldAllowFirstSave).toBe(true);
     });
   });
 
