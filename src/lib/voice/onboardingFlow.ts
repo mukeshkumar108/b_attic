@@ -52,7 +52,23 @@ function mergeDraft(
   prev: OnboardingDraft,
   updates: Partial<OnboardingDraft>
 ): OnboardingDraft {
-  const merged: OnboardingDraft = { ...prev, ...updates };
+  const merged: OnboardingDraft = { ...prev };
+
+  if (typeof updates.displayName === "string" && updates.displayName.trim()) {
+    merged.displayName = updates.displayName.trim();
+  }
+  if (typeof updates.timezone === "string" && updates.timezone.trim()) {
+    merged.timezone = updates.timezone.trim();
+  }
+  if (typeof updates.reflectionReminderEnabled === "boolean") {
+    merged.reflectionReminderEnabled = updates.reflectionReminderEnabled;
+  }
+  if (
+    typeof updates.reflectionReminderTimeLocal === "string" &&
+    updates.reflectionReminderTimeLocal.trim()
+  ) {
+    merged.reflectionReminderTimeLocal = updates.reflectionReminderTimeLocal.trim();
+  }
 
   if (merged.timezone && !isValidTimezone(merged.timezone)) {
     merged.timezone = prev.timezone ?? null;
