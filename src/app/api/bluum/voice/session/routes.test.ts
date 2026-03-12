@@ -147,7 +147,7 @@ describe("voice session API routes", () => {
     expect(payload.error.code).toBe("unauthorized");
   });
 
-  it("POST /turn validates required audio", async () => {
+  it("POST /turn requires one input source", async () => {
     const formData = new FormData();
     formData.set("sessionId", "vsn_1");
     formData.set("clientTurnId", "turn_1");
@@ -161,7 +161,32 @@ describe("voice session API routes", () => {
     const payload = await response.json();
 
     expect(response.status).toBe(400);
-    expect(payload.error.code).toBe("validation_error");
+    expect(payload.error.code).toBe("turn_input_required");
+    expect(processVoiceTurn).not.toHaveBeenCalled();
+  });
+
+  it("POST /turn rejects mixed input sources", async () => {
+    const formData = new FormData();
+    formData.set("sessionId", "vsn_1");
+    formData.set("clientTurnId", "turn_mix");
+    formData.set("textInput", "hello");
+    formData.set(
+      "audio",
+      new File([Buffer.from("test-audio")], "test-audio.m4a", {
+        type: "audio/x-m4a",
+      })
+    );
+
+    const request = new Request("http://localhost/api/bluum/voice/session/turn", {
+      method: "POST",
+      body: formData,
+    });
+
+    const response = await turnRoute(request as any);
+    const payload = await response.json();
+
+    expect(response.status).toBe(400);
+    expect(payload.error.code).toBe("turn_input_conflict");
     expect(processVoiceTurn).not.toHaveBeenCalled();
   });
 
@@ -198,6 +223,38 @@ describe("voice session API routes", () => {
         clientTurnId: "turn_1",
         mimeType: "audio/x-m4a",
         locale: "en-US",
+        textInput: null,
+        choiceValue: null,
+      })
+    );
+  });
+
+  it("POST /turn forwards textInput payload to service", async () => {
+    vi.mocked(processVoiceTurn).mockResolvedValue({
+      status: 200,
+      body: { session: { id: "vsn_1" }, turn: { id: "vturn_2" } },
+    });
+
+    const formData = new FormData();
+    formData.set("sessionId", "vsn_1");
+    formData.set("clientTurnId", "turn_text");
+    formData.set("textInput", "I have tried gratitude before.");
+
+    const request = new Request("http://localhost/api/bluum/voice/session/turn", {
+      method: "POST",
+      body: formData,
+    });
+
+    const response = await turnRoute(request as any);
+    expect(response.status).toBe(200);
+    expect(processVoiceTurn).toHaveBeenCalledWith(
+      expect.objectContaining({
+        sessionId: "vsn_1",
+        clientTurnId: "turn_text",
+        audio: null,
+        mimeType: null,
+        textInput: "I have tried gratitude before.",
+        choiceValue: null,
       })
     );
   });
@@ -227,6 +284,8 @@ describe("voice session API routes", () => {
         responseMode: "finalize",
         audio: null,
         mimeType: null,
+        textInput: null,
+        choiceValue: null,
       })
     );
   });

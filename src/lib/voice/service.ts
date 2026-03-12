@@ -49,6 +49,8 @@ interface AssistantPayload {
   audioMimeType: string | null;
   audioExpiresAt: string | null;
   ttsAvailable: boolean;
+  inputMode: VoiceAssistantInputMode;
+  choices: VoiceChoiceOption[] | null;
 }
 
 interface SafetyPayload {
@@ -65,9 +67,23 @@ interface AudioPayloadLike {
 }
 
 type VoiceTurnResponseMode = "final" | "staged" | "finalize";
+type VoiceTurnInputType = "audio" | "text" | "choice";
+type VoiceAssistantInputMode = "voice" | "text" | "choice";
+
+interface VoiceChoiceOption {
+  value: string;
+  label: string;
+}
+
+interface VoiceAssistantInputHint {
+  inputMode: VoiceAssistantInputMode;
+  choices: VoiceChoiceOption[] | null;
+}
 
 const TURN_FINALIZE_LOCK_MARKER = "__TURN_FINALIZING__";
 const TURN_FINALIZE_LOCK_STALE_MS = 2 * 60 * 1000;
+const VOICE_TEXT_INPUT_MIN_CHARS = 1;
+const VOICE_TEXT_INPUT_MAX_CHARS = 500;
 
 function toDbFlow(flow: VoiceFlowInput): VoiceFlow {
   return flow === "onboarding" ? "ONBOARDING" : "FIRST_REFLECTION";
@@ -131,7 +147,8 @@ function makeAssistantPayload(
     audioMimeType: string | null;
     audioExpiresAt: string | null;
     ttsAvailable: boolean;
-  }
+  },
+  inputHint?: VoiceAssistantInputHint
 ): AssistantPayload {
   return {
     text,
@@ -139,6 +156,8 @@ function makeAssistantPayload(
     audioMimeType: tts.audioMimeType,
     audioExpiresAt: tts.audioExpiresAt,
     ttsAvailable: tts.ttsAvailable,
+    inputMode: inputHint?.inputMode ?? "voice",
+    choices: inputHint?.inputMode === "choice" ? inputHint.choices ?? [] : null,
   };
 }
 
@@ -148,6 +167,7 @@ function makePendingTurnBody(params: {
   turnIndex: number;
   clientTurnId: string;
   transcript: string;
+  inputType: VoiceTurnInputType;
   expiresAt: Date;
 }): unknown {
   return {
@@ -166,9 +186,152 @@ function makePendingTurnBody(params: {
       userTranscript: {
         text: params.transcript,
       },
+      inputType: params.inputType,
       assistantPending: true,
     },
   };
+}
+
+function normalizeTextInput(value: string | null | undefined): string | null {
+  if (typeof value !== "string") {
+    return null;
+  }
+  const trimmed = value.trim();
+  if (!trimmed) {
+    return null;
+  }
+  if (trimmed.length < VOICE_TEXT_INPUT_MIN_CHARS) {
+    return null;
+  }
+  if (trimmed.length > VOICE_TEXT_INPUT_MAX_CHARS) {
+    throw new VoiceServiceError(
+      "validation_error",
+      400,
+      false,
+      `textInput must be ${VOICE_TEXT_INPUT_MIN_CHARS}-${VOICE_TEXT_INPUT_MAX_CHARS} characters after trimming.`
+    );
+  }
+  return trimmed;
+}
+
+function normalizeChoiceValue(value: string | null | undefined): string | null {
+  if (typeof value !== "string") {
+    return null;
+  }
+  const trimmed = value.trim();
+  return trimmed || null;
+}
+
+function parseAssistantInputHintFromResponseJson(
+  responseJson: unknown
+): VoiceAssistantInputHint {
+  if (!responseJson || typeof responseJson !== "object") {
+    return { inputMode: "voice", choices: null };
+  }
+
+  const payload = responseJson as Record<string, unknown>;
+  const assistantFromTurn =
+    payload.turn &&
+    typeof payload.turn === "object" &&
+    (payload.turn as Record<string, unknown>).assistant &&
+    typeof (payload.turn as Record<string, unknown>).assistant === "object"
+      ? ((payload.turn as Record<string, unknown>).assistant as Record<
+          string,
+          unknown
+        >)
+      : null;
+
+  const assistantFromStart =
+    payload.assistant && typeof payload.assistant === "object"
+      ? (payload.assistant as Record<string, unknown>)
+      : null;
+
+  const assistant = assistantFromTurn ?? assistantFromStart;
+  if (!assistant) {
+    return { inputMode: "voice", choices: null };
+  }
+
+  const modeRaw = assistant.inputMode;
+  const inputMode: VoiceAssistantInputMode =
+    modeRaw === "text" || modeRaw === "choice" ? modeRaw : "voice";
+
+  if (inputMode !== "choice") {
+    return { inputMode, choices: null };
+  }
+
+  const choicesRaw = assistant.choices;
+  if (!Array.isArray(choicesRaw)) {
+    return { inputMode, choices: [] };
+  }
+
+  const choices = choicesRaw
+    .map((choice) => {
+      if (!choice || typeof choice !== "object") {
+        return null;
+      }
+      const item = choice as Record<string, unknown>;
+      const value = typeof item.value === "string" ? item.value.trim() : "";
+      const label = typeof item.label === "string" ? item.label.trim() : "";
+      if (!value || !label) {
+        return null;
+      }
+      return { value, label };
+    })
+    .filter((choice): choice is VoiceChoiceOption => Boolean(choice));
+
+  return { inputMode, choices };
+}
+
+async function getExpectedInputHintForTurn(params: {
+  session: VoiceSession;
+  turnIndex: number;
+}): Promise<VoiceAssistantInputHint> {
+  if (params.turnIndex <= 1) {
+    return parseAssistantInputHintFromResponseJson(params.session.startResponseJson);
+  }
+
+  const previousTurn = await prisma.voiceTurn.findUnique({
+    where: {
+      sessionId_turnIndex: {
+        sessionId: params.session.id,
+        turnIndex: params.turnIndex - 1,
+      },
+    },
+    select: { responseJson: true },
+  });
+
+  return parseAssistantInputHintFromResponseJson(previousTurn?.responseJson ?? null);
+}
+
+function deriveOnboardingAssistantInputHint(
+  draft: OnboardingDraft,
+  readyToEnd: boolean
+): VoiceAssistantInputHint {
+  if (readyToEnd) {
+    return { inputMode: "voice", choices: null };
+  }
+  if (!draft.displayName) {
+    return { inputMode: "text", choices: null };
+  }
+  if (!draft.timezone) {
+    return { inputMode: "text", choices: null };
+  }
+  if (
+    draft.reflectionReminderEnabled === null ||
+    draft.reflectionReminderEnabled === undefined
+  ) {
+    return {
+      inputMode: "choice",
+      choices: [
+        { value: "yes", label: "Yes" },
+        { value: "no", label: "No" },
+      ],
+    };
+  }
+  if (draft.reflectionReminderEnabled && !draft.reflectionReminderTimeLocal) {
+    return { inputMode: "text", choices: null };
+  }
+  return { inputMode: "voice", choices: null };
 }
 
 async function acquireTurnFinalizeLock(turnId: string): Promise<{
@@ -553,6 +716,7 @@ async function computeAssistantTurn(params: {
   safetyPayload: SafetyPayload;
   draftToSave: unknown;
   llmLatencyMs: number;
+  inputHint: VoiceAssistantInputHint;
 }> {
   const promptText =
     params.session.flow === "FIRST_REFLECTION"
@@ -585,6 +749,7 @@ async function computeAssistantTurn(params: {
       safetyPayload,
       draftToSave,
       llmLatencyMs,
+      inputHint: { inputMode: "voice", choices: null },
     };
   }
 
@@ -663,6 +828,10 @@ async function computeAssistantTurn(params: {
       safetyPayload,
       draftToSave,
       llmLatencyMs,
+      inputHint: deriveOnboardingAssistantInputHint(
+        parseOnboardingDraft(draftToSave),
+        readyToEnd
+      ),
     };
   }
 
@@ -753,6 +922,7 @@ async function computeAssistantTurn(params: {
     safetyPayload,
     draftToSave,
     llmLatencyMs,
+    inputHint: { inputMode: "voice", choices: null },
   };
 }
 
@@ -762,6 +932,7 @@ async function finalizeVoiceTurn(params: {
   turn: VoiceTurn | null;
   transcript: string;
   sttLatencyMs: number;
+  inputType: VoiceTurnInputType;
   createInput?: {
     clientTurnId: string;
     requestHash: string;
@@ -835,7 +1006,12 @@ async function finalizeVoiceTurn(params: {
       userTranscript: {
         text: params.transcript,
       },
-      assistant: makeAssistantPayload(assistantResult.assistantText, tts),
+      inputType: params.inputType,
+      assistant: makeAssistantPayload(
+        assistantResult.assistantText,
+        tts,
+        assistantResult.inputHint
+      ),
       safety: assistantResult.safetyPayload,
     },
   };
@@ -891,11 +1067,17 @@ export async function processVoiceTurn(params: {
   clientTurnId: string;
   audio: Buffer | null;
   mimeType: string | null;
+  textInput?: string | null;
+  choiceValue?: string | null;
   audioDurationMs?: number | null;
   locale?: string | null;
   responseMode?: VoiceTurnResponseMode;
 }): Promise<{ status: number; body: unknown }> {
   const responseMode = params.responseMode ?? "final";
+  const normalizedTextInput = normalizeTextInput(params.textInput);
+  const normalizedChoiceValue = normalizeChoiceValue(params.choiceValue);
+  const hasAudioInput = Boolean(params.audio && params.mimeType);
+
   const session = await ensureSessionActive(
     await loadSessionOrThrow(params.sessionId, params.user.id)
   );
@@ -910,6 +1092,14 @@ export async function processVoiceTurn(params: {
   });
 
   if (responseMode === "finalize") {
+    if (hasAudioInput || normalizedTextInput || normalizedChoiceValue) {
+      throw new VoiceServiceError(
+        "validation_error",
+        400,
+        false,
+        "Finalize mode does not accept audio, textInput, or choiceValue."
+      );
+    }
     if (!existingTurn) {
       throw new VoiceServiceError(
         "turn_not_found",
@@ -943,6 +1133,7 @@ export async function processVoiceTurn(params: {
         turn: lock.turn,
         transcript: lock.turn.userTranscriptText,
         sttLatencyMs: lock.turn.sttLatencyMs ?? 0,
+        inputType: "audio",
       });
       return { status: 200, body: finalized };
     } catch (err) {
@@ -951,7 +1142,56 @@ export async function processVoiceTurn(params: {
     }
   }
 
-  if (!params.audio || !params.mimeType) {
+  if (responseMode === "staged") {
+    if (!hasAudioInput) {
+      throw new VoiceServiceError(
+        "unsupported_response_mode",
+        400,
+        false,
+        "Staged mode requires audio input."
+      );
+    }
+    if (normalizedTextInput || normalizedChoiceValue) {
+      throw new VoiceServiceError(
+        "turn_input_conflict",
+        400,
+        false,
+        "Provide exactly one of audio, textInput, or choiceValue."
+      );
+    }
+  } else {
+    const providedCount =
+      Number(hasAudioInput) +
+      Number(Boolean(normalizedTextInput)) +
+      Number(Boolean(normalizedChoiceValue));
+    if (providedCount === 0) {
+      throw new VoiceServiceError(
+        "turn_input_required",
+        400,
+        false,
+        "Provide exactly one of audio, textInput, or choiceValue."
+      );
+    }
+    if (providedCount > 1) {
+      throw new VoiceServiceError(
+        "turn_input_conflict",
+        400,
+        false,
+        "Provide exactly one of audio, textInput, or choiceValue."
+      );
+    }
+  }
+
+  let inputType: VoiceTurnInputType;
+  if (hasAudioInput) {
+    inputType = "audio";
+  } else if (normalizedTextInput) {
+    inputType = "text";
+  } else {
+    inputType = "choice";
+  }
+
+  if (inputType === "audio" && (!params.audio || !params.mimeType)) {
     throw new VoiceServiceError(
       "validation_error",
       400,
@@ -959,7 +1199,7 @@ export async function processVoiceTurn(params: {
       "audio file is required."
     );
   }
-  if (!ACCEPTED_AUDIO_MIME_TYPES.has(params.mimeType)) {
+  if (inputType === "audio" && params.mimeType && !ACCEPTED_AUDIO_MIME_TYPES.has(params.mimeType)) {
     throw new VoiceServiceError(
       "unsupported_media_type",
       415,
@@ -967,7 +1207,7 @@ export async function processVoiceTurn(params: {
       "Unsupported audio format."
     );
   }
-  if (params.audio.byteLength > VOICE_MAX_AUDIO_BYTES) {
+  if (inputType === "audio" && params.audio && params.audio.byteLength > VOICE_MAX_AUDIO_BYTES) {
     throw new VoiceServiceError(
       "audio_too_large",
       413,
@@ -975,7 +1215,11 @@ export async function processVoiceTurn(params: {
       "Audio file is too large."
     );
   }
-  if (params.audioDurationMs && params.audioDurationMs > VOICE_MAX_AUDIO_MS) {
+  if (
+    inputType === "audio" &&
+    params.audioDurationMs &&
+    params.audioDurationMs > VOICE_MAX_AUDIO_MS
+  ) {
     throw new VoiceServiceError(
       "audio_too_long",
       400,
@@ -988,9 +1232,12 @@ export async function processVoiceTurn(params: {
     sessionId: params.sessionId,
     clientTurnId: params.clientTurnId,
     responseMode,
+    inputType,
+    textInput: inputType === "text" ? normalizedTextInput : null,
+    choiceValue: inputType === "choice" ? normalizedChoiceValue : null,
     locale: params.locale ?? null,
     audioDurationMs: params.audioDurationMs ?? null,
-    audioHash: hashBuffer(params.audio),
+    audioHash: inputType === "audio" && params.audio ? hashBuffer(params.audio) : null,
   });
 
   if (existingTurn) {
@@ -1002,6 +1249,7 @@ export async function processVoiceTurn(params: {
           turnIndex: existingTurn.turnIndex,
           clientTurnId: existingTurn.clientTurnId,
           transcript: existingTurn.userTranscriptText,
+          inputType: "audio",
           expiresAt: session.expiresAt,
         });
         return { status: 200, body: replayBody };
@@ -1031,16 +1279,52 @@ export async function processVoiceTurn(params: {
     throw new VoiceServiceError("internal_error", 500, true, "Unable to replay turn response.");
   }
 
-  const transcribed = await transcribeWithLemonfox({
-    audio: params.audio,
-    mimeType: params.mimeType,
-    locale: params.locale ?? session.locale ?? DEFAULT_VOICE_LOCALE,
-  });
-
   const currentTurnCount = await prisma.voiceTurn.count({
     where: { sessionId: session.id },
   });
   const turnIndex = currentTurnCount + 1;
+
+  let transcript: string;
+  let sttLatencyMs = 0;
+
+  if (inputType === "audio") {
+    const transcribed = await transcribeWithLemonfox({
+      audio: params.audio!,
+      mimeType: params.mimeType!,
+      locale: params.locale ?? session.locale ?? DEFAULT_VOICE_LOCALE,
+    });
+    transcript = transcribed.text;
+    sttLatencyMs = transcribed.latencyMs;
+  } else if (inputType === "text") {
+    transcript = normalizedTextInput!;
+  } else {
+    const expectedInputHint = await getExpectedInputHintForTurn({
+      session,
+      turnIndex,
+    });
+    const expectedChoices = expectedInputHint.choices ?? [];
+    if (expectedInputHint.inputMode !== "choice" || !expectedChoices.length) {
+      throw new VoiceServiceError(
+        "invalid_choice_value",
+        422,
+        false,
+        "choiceValue is not valid for the current step."
+      );
+    }
+    const isValidChoice = expectedChoices.some(
+      (choice) => choice.value === normalizedChoiceValue
+    );
+    if (!isValidChoice) {
+      throw new VoiceServiceError(
+        "invalid_choice_value",
+        422,
+        false,
+        "choiceValue is not valid for the current step."
+      );
+    }
+    transcript = normalizedChoiceValue!;
+  }
+
   const newExpiresAt = getNextExpiry();
 
   if (responseMode === "staged") {
@@ -1051,10 +1335,10 @@ export async function processVoiceTurn(params: {
         turnIndex,
         clientTurnId: params.clientTurnId,
         requestHash,
-        userTranscriptText: transcribed.text,
+        userTranscriptText: transcript,
         assistantText: "",
         ttsAvailable: false,
-        sttLatencyMs: transcribed.latencyMs,
+        sttLatencyMs,
       },
     });
 
@@ -1068,7 +1352,8 @@ export async function processVoiceTurn(params: {
       turnId: stagedTurn.id,
       turnIndex,
       clientTurnId: params.clientTurnId,
-      transcript: transcribed.text,
+      transcript,
+      inputType,
       expiresAt: newExpiresAt,
     });
     return { status: 200, body: stagedBody };
@@ -1078,8 +1363,9 @@ export async function processVoiceTurn(params: {
     session,
     user: params.user,
     turn: null,
-    transcript: transcribed.text,
-    sttLatencyMs: transcribed.latencyMs,
+    transcript,
+    sttLatencyMs,
+    inputType,
     createInput: {
       clientTurnId: params.clientTurnId,
       requestHash,

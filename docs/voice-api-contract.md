@@ -101,7 +101,9 @@ Success response (`201`, or `200` on idempotent replay):
     "audioUrl": "https://cdn.example.com/voice/vsn_123/opening.mp3",
     "audioMimeType": "audio/mpeg",
     "audioExpiresAt": "2026-03-10T10:15:00.000Z",
-    "ttsAvailable": true
+    "ttsAvailable": true,
+    "inputMode": "voice",
+    "choices": null
   }
 }
 ```
@@ -123,11 +125,19 @@ Content-Type:
 Multipart field spec:
 - `sessionId` (string, required)
 - `clientTurnId` (string UUID, required, idempotency key)
-- `audio` (file, required for `responseMode=final|staged`; omitted for `responseMode=finalize`)
+- `audio` (file, optional; required for `responseMode=staged`)
+- `textInput` (string, optional)
+- `choiceValue` (string, optional)
 - `responseMode` (string, optional, enum: `final | staged | finalize`, default: `final`)
 - `audioDurationMs` (number, optional)
 - `locale` (string, optional)
 - `deviceTs` (string ISO-8601, optional)
+
+Input validation:
+- `responseMode=final|omitted`: provide exactly one of `audio | textInput | choiceValue`
+- `responseMode=staged`: provide `audio` only
+- `responseMode=finalize`: provide none of `audio | textInput | choiceValue`
+- `textInput` is trimmed server-side and must be `1..500` chars after trimming
 
 Audio constraints (MVP):
 - max file size: `2 MB`
@@ -155,6 +165,7 @@ Success response (`200`) for `responseMode=final`:
     "id": "vturn_456",
     "index": 1,
     "clientTurnId": "8c80f6b5-4e48-4ed2-922c-3f5f24b563f4",
+    "inputType": "audio",
     "userTranscript": {
       "text": "I am grateful for my sister calling me today."
     },
@@ -163,7 +174,9 @@ Success response (`200`) for `responseMode=final`:
       "audioUrl": "https://cdn.example.com/voice/vturn_456.mp3",
       "audioMimeType": "audio/mpeg",
       "audioExpiresAt": "2026-03-10T10:15:00.000Z",
-      "ttsAvailable": true
+      "ttsAvailable": true,
+      "inputMode": "voice",
+      "choices": null
     },
     "safety": {
       "flagged": false,
@@ -190,6 +203,7 @@ Success response (`200`) for `responseMode=staged` (pending shape):
     "id": "vturn_456",
     "index": 1,
     "clientTurnId": "8c80f6b5-4e48-4ed2-922c-3f5f24b563f4",
+    "inputType": "audio",
     "userTranscript": {
       "text": "I am grateful for my sister calling me today."
     },
@@ -216,6 +230,11 @@ Finalize call contract:
 - `audioMimeType`: `string | null`
 - `audioExpiresAt`: `string | null` (ISO-8601 when present)
 - `ttsAvailable`: `boolean` (required)
+- `inputMode`: `"voice" | "text" | "choice"` (required)
+- `choices`: `Array<{value:string,label:string}> | null` (required; non-null only when `inputMode="choice"`)
+
+`turn` input schema additions:
+- `inputType`: `"audio" | "text" | "choice"` (required in final and staged responses)
 
 Safety-flagged turn behavior:
 - `safety.flagged = true`
@@ -359,9 +378,13 @@ All non-2xx responses must use:
 Recommended error codes:
 - `unauthorized` (`401`, retryable false)
 - `validation_error` (`400`, retryable false)
+- `turn_input_required` (`400`, retryable false)
+- `turn_input_conflict` (`400`, retryable false)
+- `unsupported_response_mode` (`400`, retryable false)
 - `unsupported_media_type` (`415`, retryable false)
 - `audio_too_large` (`413`, retryable false)
 - `audio_too_long` (`400`, retryable false)
+- `invalid_choice_value` (`422`, retryable false)
 - `stt_unintelligible` (`422`, retryable true)
 - `stt_provider_error` (`503`, retryable true)
 - `llm_provider_error` (`503`, retryable true)

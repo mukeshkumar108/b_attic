@@ -36,6 +36,14 @@ function parseOptionalInt(value: FormDataEntryValue | null): number | null {
   return Number.isFinite(parsed) ? parsed : null;
 }
 
+function parseOptionalString(value: FormDataEntryValue | null): string | null {
+  if (typeof value !== "string") {
+    return null;
+  }
+  const trimmed = value.trim();
+  return trimmed || null;
+}
+
 export async function POST(request: NextRequest) {
   try {
     const { user } = await requireVoiceUser(request);
@@ -44,9 +52,14 @@ export async function POST(request: NextRequest) {
     const sessionId = formData.get("sessionId");
     const clientTurnId = formData.get("clientTurnId");
     const audio = formData.get("audio");
+    const textInput = parseOptionalString(formData.get("textInput"));
+    const choiceValue = parseOptionalString(formData.get("choiceValue"));
     const locale = formData.get("locale");
     const responseMode = parseResponseMode(formData.get("responseMode"));
     const audioDurationMs = parseOptionalInt(formData.get("audioDurationMs"));
+    const hasAudio = audio instanceof File;
+    const providedCount =
+      Number(hasAudio) + Number(Boolean(textInput)) + Number(Boolean(choiceValue));
 
     if (typeof sessionId !== "string" || !sessionId.trim()) {
       return voiceErrorResponse(
@@ -64,24 +77,58 @@ export async function POST(request: NextRequest) {
         false
       );
     }
-    if (responseMode !== "finalize" && !(audio instanceof File)) {
+    if (responseMode === "finalize") {
+      if (providedCount > 0) {
+        return voiceErrorResponse(
+          400,
+          "validation_error",
+          "Finalize mode does not accept audio, textInput, or choiceValue.",
+          false
+        );
+      }
+    } else if (responseMode === "staged") {
+      if (!hasAudio) {
+        return voiceErrorResponse(
+          400,
+          "unsupported_response_mode",
+          "Staged mode requires audio input.",
+          false
+        );
+      }
+      if (providedCount !== 1) {
+        return voiceErrorResponse(
+          400,
+          "turn_input_conflict",
+          "Provide exactly one of audio, textInput, or choiceValue.",
+          false
+        );
+      }
+    } else if (providedCount === 0) {
       return voiceErrorResponse(
         400,
-        "validation_error",
-        "audio file is required.",
+        "turn_input_required",
+        "Provide exactly one of audio, textInput, or choiceValue.",
+        false
+      );
+    } else if (providedCount > 1) {
+      return voiceErrorResponse(
+        400,
+        "turn_input_conflict",
+        "Provide exactly one of audio, textInput, or choiceValue.",
         false
       );
     }
 
     const audioBuffer =
-      audio instanceof File ? Buffer.from(await audio.arrayBuffer()) : null;
+      hasAudio ? Buffer.from(await audio.arrayBuffer()) : null;
     const result = await processVoiceTurn({
       user,
       sessionId: sessionId.trim(),
       clientTurnId: clientTurnId.trim(),
       audio: audioBuffer,
-      mimeType:
-        audio instanceof File ? audio.type || "application/octet-stream" : null,
+      mimeType: hasAudio ? audio.type || "application/octet-stream" : null,
+      textInput,
+      choiceValue,
       audioDurationMs,
       locale: typeof locale === "string" ? locale : null,
       responseMode,
