@@ -36,6 +36,24 @@ enum VoiceSessionState {
   ABORTED
 }
 
+enum ActivityType {
+  LESSON
+  BREATHING
+  GAME
+}
+
+enum ActivitySource {
+  SELF_INITIATED
+  LLM_SUGGESTED
+}
+
+enum ActivityOutcome {
+  COMPLETED
+  PARTIAL
+  EXITED
+  DECLINED
+}
+
 // ============================================================================
 // User (extended for Bluum)
 // ============================================================================
@@ -53,15 +71,16 @@ model User {
   updatedAt                   DateTime  @updatedAt
 
   // Relations
-  dailyStatuses       DailyStatus[]
-  promptHistories     PromptHistory[]
-  dailyReflections    DailyReflection[]
-  reflectionAddendums ReflectionAddendum[]
-  moodLogs            MoodLog[]
-  gratitudeMoments    GratitudeMoment[]
-  userSummaries       UserSummary[]
-  voiceSessions       VoiceSession[]
-  voiceTurns          VoiceTurn[]
+  dailyStatuses        DailyStatus[]
+  promptHistories      PromptHistory[]
+  dailyReflections     DailyReflection[]
+  reflectionAddendums  ReflectionAddendum[]
+  moodLogs             MoodLog[]
+  gratitudeMoments     GratitudeMoment[]
+  userSummaries        UserSummary[]
+  voiceSessions        VoiceSession[]
+  voiceTurns           VoiceTurn[]
+  activityEngagements  ActivityEngagement[]
 }
 
 // ============================================================================
@@ -231,8 +250,9 @@ model VoiceSession {
   createdAt         DateTime          @default(now())
   updatedAt         DateTime          @updatedAt
 
-  user  User        @relation(fields: [userId], references: [id])
-  turns VoiceTurn[]
+  user                User                 @relation(fields: [userId], references: [id])
+  turns               VoiceTurn[]
+  activityEngagements ActivityEngagement[]
 
   @@unique([userId, clientSessionId])
   @@index([userId])
@@ -275,4 +295,37 @@ model VoiceTurn {
   @@unique([sessionId, clientTurnId])
   @@index([sessionId])
   @@index([userId])
+}
+
+// ============================================================================
+// Activity Engagement - tracks user interactions with lessons, breathing, games
+// Recorded regardless of whether the activity was self-initiated or LLM-suggested
+// ============================================================================
+
+model ActivityEngagement {
+  id           String          @id @default(cuid())
+  userId       String
+  activityType ActivityType    // LESSON | BREATHING | GAME
+  activitySlug String          // e.g. 'breathing-4-7-8', 'impulse-pop', lesson slug
+  source       ActivitySource  // SELF_INITIATED | LLM_SUGGESTED
+  sessionId    String?         // VoiceSession.id if LLM-suggested
+
+  outcome      ActivityOutcome // COMPLETED | PARTIAL | EXITED | DECLINED
+  completedPct Float?          // 0.0–1.0 — for lessons and breathing exercises
+  durationSec  Int?            // time spent in the activity (even if exited early)
+  score        Int?            // primary score for games
+  scoreData    Json?           // full game-specific metrics (accuracy, streaks, etc.)
+
+  startedAt DateTime
+  endedAt   DateTime?
+  createdAt DateTime @default(now())
+
+  user    User          @relation(fields: [userId], references: [id])
+  session VoiceSession? @relation(fields: [sessionId], references: [id])
+
+  @@index([userId])
+  @@index([userId, activityType])
+  @@index([userId, activityType, activitySlug])
+  @@index([userId, createdAt])
+  @@index([sessionId])
 }
