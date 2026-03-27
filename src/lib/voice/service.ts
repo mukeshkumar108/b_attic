@@ -30,6 +30,10 @@ import {
   runReflectionCoreTurn,
 } from "@/lib/voice/reflectionCoreFlow";
 import {
+  VOICE_DEMO_HANDSHAKE_TEXT,
+  runVoiceDemoTurn,
+} from "@/lib/voice/demoFlow";
+import {
   getDefaultVoicePromptBinding,
   getFirstReflectionPromptBindingFromTrack,
   resolveFirstReflectionPromptBinding,
@@ -40,8 +44,32 @@ import { synthesizeWithElevenlabs } from "@/lib/voice/providers/elevenlabs";
 import { transcribeWithLemonfox } from "@/lib/voice/providers/lemonfox";
 import { loadPromptMdStrict } from "@/lib/llm/openrouter";
 
-export type VoiceFlowInput = "onboarding" | "first_reflection";
+export type VoiceFlowInput = "onboarding" | "first_reflection" | "voice_demo";
 export type ReflectionTrackInput = "day0" | "core";
+type VoiceTurnInputType = "audio" | "text" | "choice" | "event";
+type VoiceAssistantInputMode = "voice" | "text" | "choice";
+
+interface VoiceAssistantAction {
+  id: string;
+  kind: "breathing" | "lesson" | "game";
+  slug: string;
+  title: string;
+  prompt: string;
+  source: "product_rule" | "llm";
+  placement: "inline_card";
+}
+
+interface VoiceClientEvent {
+  type: "activity_result";
+  actionId: string;
+  activityType: "BREATHING" | "LESSON" | "GAME";
+  activitySlug: string;
+  outcome: "COMPLETED" | "PARTIAL" | "EXITED" | "DECLINED";
+  durationSec?: number | null;
+  completedPct?: number | null;
+  score?: number | null;
+  scoreData?: Record<string, unknown> | null;
+}
 
 interface AssistantPayload {
   text: string;
@@ -51,6 +79,7 @@ interface AssistantPayload {
   ttsAvailable: boolean;
   inputMode: VoiceAssistantInputMode;
   choices: VoiceChoiceOption[] | null;
+  action?: VoiceAssistantAction | null;
 }
 
 interface SafetyPayload {
@@ -67,8 +96,6 @@ interface AudioPayloadLike {
 }
 
 type VoiceTurnResponseMode = "final" | "staged" | "finalize";
-type VoiceTurnInputType = "audio" | "text" | "choice";
-type VoiceAssistantInputMode = "voice" | "text" | "choice";
 
 interface VoiceChoiceOption {
   value: string;
@@ -85,12 +112,89 @@ const TURN_FINALIZE_LOCK_STALE_MS = 2 * 60 * 1000;
 const VOICE_TEXT_INPUT_MIN_CHARS = 1;
 const VOICE_TEXT_INPUT_MAX_CHARS = 500;
 
+interface VoiceDemoDraft {
+  step?: "started" | "activity_offered" | "activity_completed" | "closed";
+  pendingAction?: VoiceAssistantAction | null;
+  lastActivityResult?: VoiceClientEvent | null;
+}
+
+function createVoiceAssistantActionId(): string {
+  return `act_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`;
+}
+
+function getVoiceDemoAction(): VoiceAssistantAction {
+  return {
+    id: createVoiceAssistantActionId(),
+    kind: "breathing",
+    slug: "breathing-4-7-8",
+    title: "4-7-8 Breathing",
+    prompt: "Want to try a quick reset first?",
+    source: "product_rule",
+    placement: "inline_card",
+  };
+}
+
+function parseVoiceDemoDraft(value: unknown): VoiceDemoDraft {
+  if (!value || typeof value !== "object") {
+    return { step: "started", pendingAction: null, lastActivityResult: null };
+  }
+  const draft = value as Record<string, unknown>;
+  return {
+    step:
+      draft.step === "started" ||
+      draft.step === "activity_offered" ||
+      draft.step === "activity_completed" ||
+      draft.step === "closed"
+        ? draft.step
+        : "started",
+    pendingAction:
+      draft.pendingAction && typeof draft.pendingAction === "object"
+        ? (draft.pendingAction as VoiceAssistantAction)
+        : null,
+    lastActivityResult:
+      draft.lastActivityResult && typeof draft.lastActivityResult === "object"
+        ? (draft.lastActivityResult as VoiceClientEvent)
+        : null,
+  };
+}
+
+function summarizeActivityResult(event: VoiceClientEvent): string {
+  const base = `${event.activityType} ${event.activitySlug} ${event.outcome.toLowerCase()}`;
+  const duration =
+    typeof event.durationSec === "number" ? ` in ${event.durationSec} seconds` : "";
+  const pct =
+    typeof event.completedPct === "number"
+      ? ` at ${Math.round(event.completedPct * 100)} percent`
+      : "";
+  const score = typeof event.score === "number" ? ` with score ${event.score}` : "";
+  return `${base}${duration}${pct}${score}`.trim();
+}
+
+function formatClientEventTranscript(event: VoiceClientEvent): string {
+  if (event.type === "activity_result") {
+    return `Activity result: ${summarizeActivityResult(event)}.`;
+  }
+  return "Client event received.";
+}
+
 function toDbFlow(flow: VoiceFlowInput): VoiceFlow {
-  return flow === "onboarding" ? "ONBOARDING" : "FIRST_REFLECTION";
+  if (flow === "onboarding") {
+    return "ONBOARDING";
+  }
+  if (flow === "voice_demo") {
+    return "VOICE_DEMO";
+  }
+  return "FIRST_REFLECTION";
 }
 
 function toApiFlow(flow: VoiceFlow): VoiceFlowInput {
-  return flow === "ONBOARDING" ? "onboarding" : "first_reflection";
+  if (flow === "ONBOARDING") {
+    return "onboarding";
+  }
+  if (flow === "VOICE_DEMO") {
+    return "voice_demo";
+  }
+  return "first_reflection";
 }
 
 function getNextExpiry(now: Date = new Date()): Date {
@@ -148,7 +252,8 @@ function makeAssistantPayload(
     audioExpiresAt: string | null;
     ttsAvailable: boolean;
   },
-  inputHint?: VoiceAssistantInputHint
+  inputHint?: VoiceAssistantInputHint,
+  action?: VoiceAssistantAction | null
 ): AssistantPayload {
   return {
     text,
@@ -158,6 +263,7 @@ function makeAssistantPayload(
     ttsAvailable: tts.ttsAvailable,
     inputMode: inputHint?.inputMode ?? "voice",
     choices: inputHint?.inputMode === "choice" ? inputHint.choices ?? [] : null,
+    action: action ?? null,
   };
 }
 
@@ -605,7 +711,7 @@ export async function startVoiceSession(params: {
     loadPromptMdStrict(reflectionPromptBinding.templatePath);
     promptId = reflectionPromptBinding.key;
     promptText = reflectionPromptBinding.version;
-  } else {
+  } else if (dbFlow === "ONBOARDING") {
     onboardingDraft = getBaseOnboardingDraft(params.user);
     sessionDraft = onboardingDraft;
     const onboardingPromptBinding = getDefaultVoicePromptBinding(dbFlow);
@@ -622,6 +728,12 @@ export async function startVoiceSession(params: {
     loadPromptMdStrict(onboardingPromptBinding.templatePath);
     promptId = onboardingPromptBinding.key;
     promptText = onboardingPromptBinding.version;
+  } else {
+    sessionDraft = {
+      step: "started",
+      pendingAction: null,
+      lastActivityResult: null,
+    };
   }
 
   const session = await prisma.voiceSession.create({
@@ -647,6 +759,8 @@ export async function startVoiceSession(params: {
       ? reflectionTrack === "core"
         ? REFLECTION_CORE_HANDSHAKE_TEXT
         : FIRST_REFLECTION_DAY0_HANDSHAKE_TEXT
+      : dbFlow === "VOICE_DEMO"
+        ? VOICE_DEMO_HANDSHAKE_TEXT
       : getOnboardingWelcomeText(onboardingDraft ?? {});
 
   let tts: AudioPayloadLike;
@@ -710,6 +824,8 @@ async function computeAssistantTurn(params: {
   user: User;
   transcript: string;
   turnIndex: number;
+  inputType: VoiceTurnInputType;
+  clientEvent?: VoiceClientEvent | null;
 }): Promise<{
   assistantText: string;
   readyToEnd: boolean;
@@ -717,6 +833,7 @@ async function computeAssistantTurn(params: {
   draftToSave: unknown;
   llmLatencyMs: number;
   inputHint: VoiceAssistantInputHint;
+  action: VoiceAssistantAction | null;
 }> {
   const promptText =
     params.session.flow === "FIRST_REFLECTION"
@@ -750,6 +867,121 @@ async function computeAssistantTurn(params: {
       draftToSave,
       llmLatencyMs,
       inputHint: { inputMode: "voice", choices: null },
+      action: null,
+    };
+  }
+
+  if (params.session.flow === "VOICE_DEMO") {
+    const historyTurns = await prisma.voiceTurn.findMany({
+      where: {
+        sessionId: params.session.id,
+        turnIndex: { lt: params.turnIndex },
+      },
+      orderBy: { turnIndex: "desc" },
+      take: 6,
+      select: {
+        userTranscriptText: true,
+        assistantText: true,
+      },
+    });
+    const history = historyTurns
+      .reverse()
+      .map((turn) => ({
+        userTranscript: turn.userTranscriptText,
+        assistantText: turn.assistantText,
+      }));
+    const demoDraft = parseVoiceDemoDraft(params.session.draft);
+
+    if (params.clientEvent?.type === "activity_result") {
+      if (
+        !demoDraft.pendingAction ||
+        demoDraft.pendingAction.id !== params.clientEvent.actionId ||
+        demoDraft.pendingAction.slug !== params.clientEvent.activitySlug
+      ) {
+        throw new VoiceServiceError(
+          "validation_error",
+          400,
+          false,
+          "activity_result does not match the pending action."
+        );
+      }
+      const llmStartedAt = Date.now();
+      assistantText = await runVoiceDemoTurn({
+        mode: "post_activity",
+        transcript: params.transcript,
+        history,
+        activityResultSummary: summarizeActivityResult(params.clientEvent),
+        profile: {
+          name: params.user.displayName ?? null,
+        },
+      });
+      llmLatencyMs = Date.now() - llmStartedAt;
+      readyToEnd = false;
+      draftToSave = {
+        ...demoDraft,
+        step: "activity_completed",
+        pendingAction: null,
+        lastActivityResult: params.clientEvent,
+      };
+      safetyPayload = {
+        flagged: false,
+        reason: "none",
+        safeResponse: null,
+      };
+      return {
+        assistantText,
+        readyToEnd,
+        safetyPayload,
+        draftToSave,
+        llmLatencyMs,
+        inputHint: { inputMode: "voice", choices: null },
+        action: null,
+      };
+    }
+
+    const llmStartedAt = Date.now();
+    assistantText = await runVoiceDemoTurn({
+      mode:
+        demoDraft.step === "activity_completed" ? "closing" : "pre_activity",
+      transcript: params.transcript,
+      history,
+      activityResultSummary: demoDraft.lastActivityResult
+        ? summarizeActivityResult(demoDraft.lastActivityResult)
+        : null,
+      profile: {
+        name: params.user.displayName ?? null,
+      },
+    });
+    llmLatencyMs = Date.now() - llmStartedAt;
+    readyToEnd = demoDraft.step === "activity_completed";
+    const action =
+      demoDraft.step === "started" || !demoDraft.pendingAction
+        ? getVoiceDemoAction()
+        : null;
+    draftToSave = readyToEnd
+      ? {
+          ...demoDraft,
+          step: "closed",
+          pendingAction: null,
+        }
+      : {
+          ...demoDraft,
+          step: "activity_offered",
+          pendingAction: action,
+        };
+    safetyPayload = {
+      flagged: false,
+      reason: "none",
+      safeResponse: null,
+    };
+    return {
+      assistantText,
+      readyToEnd,
+      safetyPayload,
+      draftToSave,
+      llmLatencyMs,
+      inputHint: { inputMode: "voice", choices: null },
+      action,
     };
   }
 
@@ -832,6 +1064,7 @@ async function computeAssistantTurn(params: {
         parseOnboardingDraft(draftToSave),
         readyToEnd
       ),
+      action: null,
     };
   }
 
@@ -923,6 +1156,7 @@ async function computeAssistantTurn(params: {
     draftToSave,
     llmLatencyMs,
     inputHint: { inputMode: "voice", choices: null },
+    action: null,
   };
 }
 
@@ -933,6 +1167,7 @@ async function finalizeVoiceTurn(params: {
   transcript: string;
   sttLatencyMs: number;
   inputType: VoiceTurnInputType;
+  clientEvent?: VoiceClientEvent | null;
   createInput?: {
     clientTurnId: string;
     requestHash: string;
@@ -949,6 +1184,8 @@ async function finalizeVoiceTurn(params: {
     user: params.user,
     transcript: params.transcript,
     turnIndex,
+    inputType: params.inputType,
+    clientEvent: params.clientEvent ?? null,
   });
 
   const tts = await synthesizeWithElevenlabs({
@@ -1010,13 +1247,41 @@ async function finalizeVoiceTurn(params: {
       assistant: makeAssistantPayload(
         assistantResult.assistantText,
         tts,
-        assistantResult.inputHint
+        assistantResult.inputHint,
+        assistantResult.action
       ),
       safety: assistantResult.safetyPayload,
     },
   };
 
-  await prisma.$transaction([
+  const activityEngagementCreate =
+    params.clientEvent?.type === "activity_result"
+      ? prisma.activityEngagement.create({
+          data: {
+            userId: params.user.id,
+            activityType: params.clientEvent.activityType,
+            activitySlug: params.clientEvent.activitySlug,
+            source: "LLM_SUGGESTED",
+            sessionId: params.session.id,
+            outcome: params.clientEvent.outcome,
+            completedPct: params.clientEvent.completedPct ?? null,
+            durationSec: params.clientEvent.durationSec ?? null,
+            score: params.clientEvent.score ?? null,
+            scoreData: params.clientEvent.scoreData
+              ? (params.clientEvent.scoreData as Prisma.InputJsonValue)
+              : undefined,
+            startedAt: new Date(
+              Date.now() -
+                ((params.clientEvent.durationSec ?? 0) > 0
+                  ? (params.clientEvent.durationSec ?? 0) * 1000
+                  : 0)
+            ),
+            endedAt: new Date(),
+          },
+        })
+      : null;
+
+  const transactionOps: Prisma.PrismaPromise<unknown>[] = [
     prisma.voiceSession.update({
       where: { id: params.session.id },
       data: {
@@ -1056,7 +1321,12 @@ async function finalizeVoiceTurn(params: {
         responseJson: toJsonInput(body),
       },
     }),
-  ]);
+  ];
+  if (activityEngagementCreate) {
+    transactionOps.push(activityEngagementCreate);
+  }
+
+  await prisma.$transaction(transactionOps);
 
   return body;
 }
@@ -1069,6 +1339,7 @@ export async function processVoiceTurn(params: {
   mimeType: string | null;
   textInput?: string | null;
   choiceValue?: string | null;
+  clientEvent?: VoiceClientEvent | null;
   audioDurationMs?: number | null;
   locale?: string | null;
   responseMode?: VoiceTurnResponseMode;
@@ -1077,6 +1348,7 @@ export async function processVoiceTurn(params: {
   const normalizedTextInput = normalizeTextInput(params.textInput);
   const normalizedChoiceValue = normalizeChoiceValue(params.choiceValue);
   const hasAudioInput = Boolean(params.audio && params.mimeType);
+  const hasClientEvent = Boolean(params.clientEvent);
 
   const session = await ensureSessionActive(
     await loadSessionOrThrow(params.sessionId, params.user.id)
@@ -1163,7 +1435,8 @@ export async function processVoiceTurn(params: {
     const providedCount =
       Number(hasAudioInput) +
       Number(Boolean(normalizedTextInput)) +
-      Number(Boolean(normalizedChoiceValue));
+      Number(Boolean(normalizedChoiceValue)) +
+      Number(hasClientEvent);
     if (providedCount === 0) {
       throw new VoiceServiceError(
         "turn_input_required",
@@ -1185,6 +1458,8 @@ export async function processVoiceTurn(params: {
   let inputType: VoiceTurnInputType;
   if (hasAudioInput) {
     inputType = "audio";
+  } else if (hasClientEvent) {
+    inputType = "event";
   } else if (normalizedTextInput) {
     inputType = "text";
   } else {
@@ -1235,6 +1510,7 @@ export async function processVoiceTurn(params: {
     inputType,
     textInput: inputType === "text" ? normalizedTextInput : null,
     choiceValue: inputType === "choice" ? normalizedChoiceValue : null,
+    clientEvent: inputType === "event" ? params.clientEvent : null,
     locale: params.locale ?? null,
     audioDurationMs: params.audioDurationMs ?? null,
     audioHash: inputType === "audio" && params.audio ? hashBuffer(params.audio) : null,
@@ -1295,6 +1571,8 @@ export async function processVoiceTurn(params: {
     });
     transcript = transcribed.text;
     sttLatencyMs = transcribed.latencyMs;
+  } else if (inputType === "event") {
+    transcript = formatClientEventTranscript(params.clientEvent!);
   } else if (inputType === "text") {
     transcript = normalizedTextInput!;
   } else {
@@ -1366,6 +1644,7 @@ export async function processVoiceTurn(params: {
     transcript,
     sttLatencyMs,
     inputType,
+    clientEvent: params.clientEvent ?? null,
     createInput: {
       clientTurnId: params.clientTurnId,
       requestHash,
@@ -1469,7 +1748,7 @@ export async function endVoiceSession(params: {
         onboarding: null,
       };
       }
-    } else {
+    } else if (session.flow === "ONBOARDING") {
       const draft = parseOnboardingDraft(session.draft);
       if (!isOnboardingComplete(draft)) {
         throw new VoiceServiceError(
@@ -1531,6 +1810,11 @@ export async function endVoiceSession(params: {
             reflectionReminderTimeLocal: updatedUser.reflectionReminderTimeLocal,
           },
         },
+      };
+    } else {
+      result = {
+        reflection: null,
+        onboarding: null,
       };
     }
   }

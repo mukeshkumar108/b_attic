@@ -44,6 +44,36 @@ function parseOptionalString(value: FormDataEntryValue | null): string | null {
   return trimmed || null;
 }
 
+function parseOptionalClientEvent(
+  value: FormDataEntryValue | null
+):
+  | {
+      type: "activity_result";
+      actionId: string;
+      activityType: "BREATHING" | "LESSON" | "GAME";
+      activitySlug: string;
+      outcome: "COMPLETED" | "PARTIAL" | "EXITED" | "DECLINED";
+      durationSec?: number | null;
+      completedPct?: number | null;
+      score?: number | null;
+      scoreData?: Record<string, unknown> | null;
+    }
+  | null {
+  if (typeof value !== "string" || !value.trim()) {
+    return null;
+  }
+  try {
+    return JSON.parse(value);
+  } catch {
+    throw new VoiceServiceError(
+      "validation_error",
+      400,
+      false,
+      "clientEvent must be valid JSON."
+    );
+  }
+}
+
 export async function POST(request: NextRequest) {
   try {
     const { user } = await requireVoiceUser(request);
@@ -54,12 +84,16 @@ export async function POST(request: NextRequest) {
     const audio = formData.get("audio");
     const textInput = parseOptionalString(formData.get("textInput"));
     const choiceValue = parseOptionalString(formData.get("choiceValue"));
+    const clientEvent = parseOptionalClientEvent(formData.get("clientEvent"));
     const locale = formData.get("locale");
     const responseMode = parseResponseMode(formData.get("responseMode"));
     const audioDurationMs = parseOptionalInt(formData.get("audioDurationMs"));
     const hasAudio = audio instanceof File;
     const providedCount =
-      Number(hasAudio) + Number(Boolean(textInput)) + Number(Boolean(choiceValue));
+      Number(hasAudio) +
+      Number(Boolean(textInput)) +
+      Number(Boolean(choiceValue)) +
+      Number(Boolean(clientEvent));
 
     if (typeof sessionId !== "string" || !sessionId.trim()) {
       return voiceErrorResponse(
@@ -129,6 +163,7 @@ export async function POST(request: NextRequest) {
       mimeType: hasAudio ? audio.type || "application/octet-stream" : null,
       textInput,
       choiceValue,
+      clientEvent,
       audioDurationMs,
       locale: typeof locale === "string" ? locale : null,
       responseMode,

@@ -6,7 +6,7 @@ import { VoiceServiceError, voiceErrorResponse } from "@/lib/voice/errors";
 import { startVoiceSession } from "@/lib/voice/service";
 
 const startSchema = z.object({
-  flow: z.enum(["onboarding", "first_reflection"]),
+  flow: z.enum(["onboarding", "first_reflection", "voice_demo"]),
   reflectionTrack: z.enum(["day0", "core"]).optional().nullable(),
   practiceMode: z.boolean().optional().nullable(),
   clientSessionId: z.string().min(1),

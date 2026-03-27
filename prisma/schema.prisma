@@ -27,6 +27,7 @@ enum CoachType {
 enum VoiceFlow {
   ONBOARDING
   FIRST_REFLECTION
+  VOICE_DEMO
 }
 
 enum VoiceSessionState {

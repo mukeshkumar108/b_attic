@@ -81,6 +81,31 @@ describe("voice session API routes", () => {
     );
   });
 
+  it("POST /start forwards voice_demo flow", async () => {
+    vi.mocked(startVoiceSession).mockResolvedValue({
+      status: 201,
+      body: { session: { id: "vsn_demo" } },
+    });
+
+    const request = new Request("http://localhost/api/bluum/voice/session/start", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        flow: "voice_demo",
+        clientSessionId: "demo_1",
+      }),
+    });
+
+    const response = await startRoute(request as any);
+    expect(response.status).toBe(201);
+    expect(startVoiceSession).toHaveBeenCalledWith(
+      expect.objectContaining({
+        flow: "voice_demo",
+        clientSessionId: "demo_1",
+      })
+    );
+  });
+
   it("POST /start forwards practiceMode when provided", async () => {
     vi.mocked(startVoiceSession).mockResolvedValue({
       status: 201,
@@ -225,6 +250,48 @@ describe("voice session API routes", () => {
         locale: "en-US",
         textInput: null,
         choiceValue: null,
+      })
+    );
+  });
+
+  it("POST /turn forwards clientEvent payload to service", async () => {
+    vi.mocked(processVoiceTurn).mockResolvedValue({
+      status: 200,
+      body: { session: { id: "vsn_1" }, turn: { id: "vturn_evt_1" } },
+    });
+
+    const formData = new FormData();
+    formData.set("sessionId", "vsn_1");
+    formData.set("clientTurnId", "turn_evt_1");
+    formData.set(
+      "clientEvent",
+      JSON.stringify({
+        type: "activity_result",
+        actionId: "act_1",
+        activityType: "BREATHING",
+        activitySlug: "breathing-4-7-8",
+        outcome: "COMPLETED",
+        durationSec: 58,
+        completedPct: 1,
+      })
+    );
+
+    const request = new Request("http://localhost/api/bluum/voice/session/turn", {
+      method: "POST",
+      body: formData,
+    });
+
+    const response = await turnRoute(request as any);
+    expect(response.status).toBe(200);
+    expect(processVoiceTurn).toHaveBeenCalledWith(
+      expect.objectContaining({
+        sessionId: "vsn_1",
+        clientTurnId: "turn_evt_1",
+        clientEvent: expect.objectContaining({
+          type: "activity_result",
+          actionId: "act_1",
+          activityType: "BREATHING",
+        }),
       })
     );
   });
