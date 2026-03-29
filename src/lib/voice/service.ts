@@ -31,6 +31,8 @@ import {
 } from "@/lib/voice/reflectionCoreFlow";
 import {
   VOICE_DEMO_HANDSHAKE_TEXT,
+  resolveVoiceDemoDismissTurn,
+  resolveVoiceDemoOfferTurn,
   runVoiceDemoTurn,
 } from "@/lib/voice/demoFlow";
 import {
@@ -113,7 +115,13 @@ const VOICE_TEXT_INPUT_MIN_CHARS = 1;
 const VOICE_TEXT_INPUT_MAX_CHARS = 500;
 
 interface VoiceDemoDraft {
-  step?: "started" | "activity_offered" | "activity_completed" | "closed";
+  step?:
+    | "started"
+    | "offered"
+    | "accepted_pending_start"
+    | "dismissed_after_accept"
+    | "activity_completed"
+    | "closed";
   pendingAction?: VoiceAssistantAction | null;
   lastActivityResult?: VoiceClientEvent | null;
 }
@@ -142,7 +150,9 @@ function parseVoiceDemoDraft(value: unknown): VoiceDemoDraft {
   return {
     step:
       draft.step === "started" ||
-      draft.step === "activity_offered" ||
+      draft.step === "offered" ||
+      draft.step === "accepted_pending_start" ||
+      draft.step === "dismissed_after_accept" ||
       draft.step === "activity_completed" ||
       draft.step === "closed"
         ? draft.step
@@ -906,20 +916,26 @@ async function computeAssistantTurn(params: {
         );
       }
       const llmStartedAt = Date.now();
-      assistantText = await runVoiceDemoTurn({
-        mode: "post_activity",
-        transcript: params.transcript,
-        history,
-        activityResultSummary: summarizeActivityResult(params.clientEvent),
-        profile: {
-          name: params.user.displayName ?? null,
-        },
-      });
+      assistantText =
+        params.clientEvent.outcome === "DECLINED"
+          ? "No problem. Do you want to keep the demo moving, or give the reset another go?"
+          : await runVoiceDemoTurn({
+              mode: "post_activity",
+              transcript: params.transcript,
+              history,
+              activityResultSummary: summarizeActivityResult(params.clientEvent),
+              profile: {
+                name: params.user.displayName ?? null,
+              },
+            });
       llmLatencyMs = Date.now() - llmStartedAt;
       readyToEnd = false;
       draftToSave = {
         ...demoDraft,
-        step: "activity_completed",
+        step:
+          params.clientEvent.outcome === "DECLINED"
+            ? "dismissed_after_accept"
+            : "activity_completed",
         pendingAction: null,
         lastActivityResult: params.clientEvent,
       };
@@ -939,6 +955,102 @@ async function computeAssistantTurn(params: {
       };
     }
 
+    if (demoDraft.step === "offered") {
+      const llmStartedAt = Date.now();
+      const resolution = await resolveVoiceDemoOfferTurn({
+        transcript: params.transcript,
+        history,
+        profile: {
+          name: params.user.displayName ?? null,
+        },
+      });
+      llmLatencyMs = Date.now() - llmStartedAt;
+      const action =
+        resolution.intent === "accept" ? getVoiceDemoAction() : null;
+      assistantText = resolution.reply;
+      readyToEnd = false;
+      draftToSave =
+        resolution.intent === "accept"
+          ? {
+              ...demoDraft,
+              step: "accepted_pending_start",
+              pendingAction: action,
+            }
+          : resolution.intent === "decline"
+            ? {
+                ...demoDraft,
+                step: "closed",
+                pendingAction: null,
+              }
+            : {
+                ...demoDraft,
+                step: "offered",
+                pendingAction: null,
+              };
+      safetyPayload = {
+        flagged: false,
+        reason: "none",
+        safeResponse: null,
+      };
+      return {
+        assistantText,
+        readyToEnd,
+        safetyPayload,
+        draftToSave,
+        llmLatencyMs,
+        inputHint: { inputMode: "voice", choices: null },
+        action,
+      };
+    }
+
+    if (demoDraft.step === "dismissed_after_accept") {
+      const llmStartedAt = Date.now();
+      const resolution = await resolveVoiceDemoDismissTurn({
+        transcript: params.transcript,
+        history,
+        profile: {
+          name: params.user.displayName ?? null,
+        },
+      });
+      llmLatencyMs = Date.now() - llmStartedAt;
+      const action =
+        resolution.intent === "retry_activity" ? getVoiceDemoAction() : null;
+      assistantText = resolution.reply;
+      readyToEnd = false;
+      draftToSave =
+        resolution.intent === "retry_activity"
+          ? {
+              ...demoDraft,
+              step: "accepted_pending_start",
+              pendingAction: action,
+            }
+          : resolution.intent === "continue_session"
+            ? {
+                ...demoDraft,
+                step: "closed",
+                pendingAction: null,
+              }
+            : {
+                ...demoDraft,
+                step: "dismissed_after_accept",
+                pendingAction: null,
+              };
+      safetyPayload = {
+        flagged: false,
+        reason: "none",
+        safeResponse: null,
+      };
+      return {
+        assistantText,
+        readyToEnd,
+        safetyPayload,
+        draftToSave,
+        llmLatencyMs,
+        inputHint: { inputMode: "voice", choices: null },
+        action,
+      };
+    }
+
     const llmStartedAt = Date.now();
     assistantText = await runVoiceDemoTurn({
       mode:
@@ -953,11 +1065,8 @@ async function computeAssistantTurn(params: {
       },
     });
     llmLatencyMs = Date.now() - llmStartedAt;
-    readyToEnd = demoDraft.step === "activity_completed";
-    const action =
-      demoDraft.step === "started" || !demoDraft.pendingAction
-        ? getVoiceDemoAction()
-        : null;
+    readyToEnd =
+      demoDraft.step === "activity_completed" || demoDraft.step === "closed";
     draftToSave = readyToEnd
       ? {
           ...demoDraft,
@@ -966,8 +1075,8 @@ async function computeAssistantTurn(params: {
         }
       : {
           ...demoDraft,
-          step: "activity_offered",
-          pendingAction: action,
+          step: "offered",
+          pendingAction: null,
         };
     safetyPayload = {
       flagged: false,
@@ -978,12 +1087,12 @@ async function computeAssistantTurn(params: {
       assistantText,
       readyToEnd,
       safetyPayload,
-      draftToSave,
-      llmLatencyMs,
-      inputHint: { inputMode: "voice", choices: null },
-      action,
-    };
-  }
+        draftToSave,
+        llmLatencyMs,
+        inputHint: { inputMode: "voice", choices: null },
+        action: null,
+      };
+    }
 
   if (params.session.flow === "ONBOARDING") {
     let onboardingPromptBinding: VoicePromptBinding;
