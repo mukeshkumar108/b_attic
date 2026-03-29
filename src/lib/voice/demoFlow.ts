@@ -1,5 +1,7 @@
 import {
   callOpenRouterWithModelFallback,
+  fillTemplate,
+  loadPromptMdStrict,
   parseJsonWithZod,
 } from "@/lib/llm/openrouter";
 import { z } from "zod";
@@ -7,6 +9,85 @@ import { getFirstReflectionDay1To3ModelChain } from "@/lib/voice/modelRouting";
 
 export const VOICE_DEMO_HANDSHAKE_TEXT =
   "Welcome to the voice demo. I'll give you a feel for how a session can flow, including a quick guided reset in the middle. To start, tell me what usually helps you settle in when you're trying something new.";
+
+const VOICE_IDENTITY_KERNEL_PATH =
+  "src/lib/llm/prompts/voice_identity_kernel_v1.md";
+const VOICE_INTERVENTION_KERNEL_PATH =
+  "src/lib/llm/prompts/voice_intervention_kernel_v1.md";
+const VOICE_DEMO_MAIN_PROMPT_PATH =
+  "src/lib/llm/prompts/voice_demo_main_v1.md";
+const VOICE_INTERVENTION_OFFER_PROMPT_PATH =
+  "src/lib/llm/prompts/voice_intervention_offer_resolution_v1.md";
+const VOICE_INTERVENTION_DISMISS_PROMPT_PATH =
+  "src/lib/llm/prompts/voice_intervention_dismiss_resolution_v1.md";
+
+function loadVoiceIdentityKernel(): string {
+  return loadPromptMdStrict(VOICE_IDENTITY_KERNEL_PATH);
+}
+
+function loadVoiceInterventionKernel(): string {
+  return loadPromptMdStrict(VOICE_INTERVENTION_KERNEL_PATH);
+}
+
+function buildVoiceDemoMainPrompt(params: {
+  mode: "pre_activity" | "post_activity" | "closing";
+  transcript: string;
+  history: string;
+  activityResult: string;
+  name: string;
+}): string {
+  const template = loadPromptMdStrict(VOICE_DEMO_MAIN_PROMPT_PATH);
+  return fillTemplate(template, {
+    IDENTITY_KERNEL: loadVoiceIdentityKernel(),
+    MODE: params.mode,
+    TRANSCRIPT: params.transcript,
+    HISTORY: params.history,
+    ACTIVITY_RESULT: params.activityResult,
+    NAME: params.name,
+  });
+}
+
+function buildOfferResolutionPrompt(params: {
+  transcript: string;
+  history: string;
+  name: string;
+  activityType: string;
+  activityTitle: string;
+  activityDescription: string;
+}): string {
+  const template = loadPromptMdStrict(VOICE_INTERVENTION_OFFER_PROMPT_PATH);
+  return fillTemplate(template, {
+    IDENTITY_KERNEL: loadVoiceIdentityKernel(),
+    INTERVENTION_KERNEL: loadVoiceInterventionKernel(),
+    TRANSCRIPT: params.transcript,
+    HISTORY: params.history,
+    NAME: params.name,
+    ACTIVITY_TYPE: params.activityType,
+    ACTIVITY_TITLE: params.activityTitle,
+    ACTIVITY_DESCRIPTION: params.activityDescription,
+  });
+}
+
+function buildDismissResolutionPrompt(params: {
+  transcript: string;
+  history: string;
+  name: string;
+  activityType: string;
+  activityTitle: string;
+  activityDescription: string;
+}): string {
+  const template = loadPromptMdStrict(VOICE_INTERVENTION_DISMISS_PROMPT_PATH);
+  return fillTemplate(template, {
+    IDENTITY_KERNEL: loadVoiceIdentityKernel(),
+    INTERVENTION_KERNEL: loadVoiceInterventionKernel(),
+    TRANSCRIPT: params.transcript,
+    HISTORY: params.history,
+    NAME: params.name,
+    ACTIVITY_TYPE: params.activityType,
+    ACTIVITY_TITLE: params.activityTitle,
+    ACTIVITY_DESCRIPTION: params.activityDescription,
+  });
+}
 
 const VoiceDemoOfferResolutionSchema = z.object({
   intent: z.enum(["accept", "decline", "clarify"]),
@@ -47,29 +128,13 @@ export async function runVoiceDemoTurn(params: {
   };
 }): Promise<string> {
   const history = params.history ?? [];
-  const prompt = [
-    "You are Bluum in a product demo voice flow.",
-    "Keep replies natural, warm, and concise.",
-    "Never mention JSON, tool calls, or internal state.",
-    "The user is testing how conversation can pause for a guided activity and then resume smoothly.",
-    params.mode === "pre_activity"
-      ? "Reply to the user naturally, then tee up a short breathing reset. Do not sound salesy. End in a way that makes the breathing invitation feel natural."
-      : params.mode === "post_activity"
-        ? "The guided breathing step just ended. Reply naturally using the activity result and continue the conversation with one grounded follow-up question."
-        : "Continue naturally after the guided activity. This is the closing turn, so be warm, lightly reflective, and wrap the demo without opening a big new thread.",
-    "",
-    "SESSION CONTEXT",
-    `Name: ${params.profile?.name || "unknown"}`,
-    params.activityResultSummary
-      ? `Activity result: ${params.activityResultSummary}`
-      : "Activity result: none yet",
-    "",
-    "CONVERSATION SO FAR",
-    formatConversationHistory(history),
-    "",
-    "LATEST USER INPUT",
-    `User: ${params.transcript}`,
-  ].join("\n");
+  const prompt = buildVoiceDemoMainPrompt({
+    mode: params.mode,
+    transcript: params.transcript,
+    history: formatConversationHistory(history),
+    activityResult: params.activityResultSummary ?? "none yet",
+    name: params.profile?.name || "unknown",
+  });
 
   try {
     const raw = await callOpenRouterWithModelFallback(prompt, {
@@ -103,28 +168,14 @@ export async function resolveVoiceDemoOfferTurn(params: {
   };
 }): Promise<z.infer<typeof VoiceDemoOfferResolutionSchema>> {
   const history = params.history ?? [];
-  const prompt = [
-    "You are resolving a narrow voice intervention offer for Bluum.",
-    "The assistant previously suggested a short breathing reset in the middle of a demo session.",
-    "Classify the user's latest response as exactly one of: accept, decline, clarify.",
-    "Use accept for yes/okay/sounds good/if it's short.",
-    "Use decline for no/not now/keep talking/continue without it.",
-    "Use clarify for questions, uncertainty, or mixed responses.",
-    "Return JSON only with keys intent and reply.",
-    "The reply should be short, natural, and spoken.",
-    "If clarify, answer briefly and re-offer the same breathing reset.",
-    "If accept, acknowledge and say the reset is ready to start.",
-    "If decline, acknowledge and continue the demo without pressure.",
-    "",
-    "SESSION CONTEXT",
-    `Name: ${params.profile?.name || "unknown"}`,
-    "",
-    "CONVERSATION SO FAR",
-    formatConversationHistory(history),
-    "",
-    "LATEST USER INPUT",
-    `User: ${params.transcript}`,
-  ].join("\n");
+  const prompt = buildOfferResolutionPrompt({
+    transcript: params.transcript,
+    history: formatConversationHistory(history),
+    name: params.profile?.name || "unknown",
+    activityType: "breathing",
+    activityTitle: "4-7-8 Breathing",
+    activityDescription: "A short guided breathing reset, about two minutes, then back into the conversation.",
+  });
 
   try {
     const raw = await callOpenRouterWithModelFallback(prompt, {
@@ -171,26 +222,14 @@ export async function resolveVoiceDemoDismissTurn(params: {
   };
 }): Promise<z.infer<typeof VoiceDemoDismissResolutionSchema>> {
   const history = params.history ?? [];
-  const prompt = [
-    "You are resolving a narrow follow-up after the user dismissed the breathing reset UI in a Bluum voice demo.",
-    "Classify the user's latest response as exactly one of: retry_activity, continue_session, clarify.",
-    "Use retry_activity if the user wants to try the breathing reset again.",
-    "Use continue_session if the user wants to keep talking and move on.",
-    "Use clarify if the user is asking a question or still unsure.",
-    "Return JSON only with keys intent and reply.",
-    "If retry_activity, acknowledge and say the reset is ready again.",
-    "If continue_session, acknowledge and smoothly continue the demo.",
-    "If clarify, answer briefly and ask whether they want to retry or continue.",
-    "",
-    "SESSION CONTEXT",
-    `Name: ${params.profile?.name || "unknown"}`,
-    "",
-    "CONVERSATION SO FAR",
-    formatConversationHistory(history),
-    "",
-    "LATEST USER INPUT",
-    `User: ${params.transcript}`,
-  ].join("\n");
+  const prompt = buildDismissResolutionPrompt({
+    transcript: params.transcript,
+    history: formatConversationHistory(history),
+    name: params.profile?.name || "unknown",
+    activityType: "breathing",
+    activityTitle: "4-7-8 Breathing",
+    activityDescription: "A short guided breathing reset, about two minutes, then back into the conversation.",
+  });
 
   try {
     const raw = await callOpenRouterWithModelFallback(prompt, {

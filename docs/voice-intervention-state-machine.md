@@ -370,6 +370,45 @@ For `voice_demo`:
 
 This is enough to validate the full pattern without overbuilding.
 
+## Prompt layering
+
+The recommended prompt structure is layered:
+
+1. Shared identity kernel
+- reusable voice role and style rules
+- should apply across main voice prompts and intervention prompts
+
+2. Shared intervention kernel
+- reusable rules for narrow intervention-resolution prompts
+- intent interpretation and structured output discipline live here
+
+3. Scenario prompt
+- offer resolution
+- dismiss resolution
+- post-result integration
+- activity-specific framing belongs here
+
+4. Runtime context
+- name
+- activity metadata
+- conversation history
+- latest transcript
+
+Code should own:
+- state machine
+- prompt selection
+- model selection
+- runtime variable injection
+
+Prompt files should own:
+- role
+- tone
+- scenario instructions
+- allowed intent set
+- expected output format
+
+This avoids the anti-pattern of embedding large system-prompt strings inline between deterministic `if/else` blocks.
+
 ## Future extension
 
 If this works well in `voice_demo`, the same state machine can later be reused for:
