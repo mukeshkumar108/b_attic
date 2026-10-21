@@ -2,6 +2,9 @@ import { NextResponse } from "next/server";
 
 export type VoiceErrorCode =
   | "unauthorized"
+  | "voice_not_configured"
+  | "invalid_token"
+  | "user_not_found"
   | "validation_error"
   | "unsupported_media_type"
   | "audio_too_large"
