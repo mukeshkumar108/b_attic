@@ -36,6 +36,7 @@ describe("streaming voice routes", () => {
     const body = await res.json();
     expect(body.voiceUrl).toBe("wss://voice.example/voice/v1/realtime");
     expect(typeof body.opener).toBe("string");
+    expect(body.voice).toBe("Noelle");
     const claims = verifyVoiceToken(body.token, "test-secret");
     expect(claims).toMatchObject({
       uid: "user_1",

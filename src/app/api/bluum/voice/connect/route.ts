@@ -11,6 +11,10 @@ import {
 } from "@/lib/voice/connectToken";
 
 // Product-owned cue the app sends as the first message so the assistant opens the session herself.
+// Bluum's voice. The voice server routes this name to its HeyGen provider; if that is not configured there it
+// falls back to its default voice, so removing the provider setting is the instant rollback.
+const SESSION_VOICE = "Noelle";
+
 const SESSION_OPENER = "(I've just opened the session.)";
 
 const connectSchema = z.object({
@@ -63,7 +67,7 @@ export async function POST(request: NextRequest) {
       secret
     );
 
-    return NextResponse.json({ voiceUrl, token, opener: SESSION_OPENER });
+    return NextResponse.json({ voiceUrl, token, opener: SESSION_OPENER, voice: SESSION_VOICE });
   } catch (err) {
     if (err instanceof AuthError) {
       return voiceErrorResponse(err.statusCode, "unauthorized", err.message, false);
