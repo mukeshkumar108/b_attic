@@ -1,13 +1,18 @@
 import { describe, expect, it } from "vitest";
-import { signVoiceToken, verifyVoiceToken, type VoiceConnectClaims } from "@/lib/voice/connectToken";
+import {
+  claimsFromBearer,
+  signVoiceToken,
+  verifyVoiceToken,
+  type VoiceConnectClaims,
+} from "@/lib/voice/connectToken";
 
 const claims: VoiceConnectClaims = {
-  v: 1,
-  sid: "sess_1",
   uid: "user_1",
-  pid: "bloom",
-  flow: "first_reflection_core",
+  cid: "conv_1",
   tz: "Europe/London",
+  companion: "bloom",
+  flow: "first_reflection_core",
+  host: "https://b-attic.example",
   iat: 1000,
   exp: 1300,
 };
@@ -31,8 +36,15 @@ describe("voice connect token", () => {
     expect(verifyVoiceToken(`${body}.x`, "secret", 1100)).toBeNull();
   });
 
-  it("rejects unknown product or flow", () => {
-    const bad = signVoiceToken({ ...claims, flow: "nope" as never }, "secret");
-    expect(verifyVoiceToken(bad, "secret", 1100)).toBeNull();
+  it("rejects unknown companion or flow", () => {
+    expect(verifyVoiceToken(signVoiceToken({ ...claims, flow: "nope" as never }, "secret"), "secret", 1100)).toBeNull();
+    expect(verifyVoiceToken(signVoiceToken({ ...claims, companion: "sophie" as never }, "secret"), "secret", 1100)).toBeNull();
+  });
+
+  it("reads a bearer header", () => {
+    const token = signVoiceToken({ ...claims, exp: Math.floor(Date.now() / 1000) + 60 }, "secret");
+    expect(claimsFromBearer(`Bearer ${token}`, "secret")?.uid).toBe("user_1");
+    expect(claimsFromBearer(token, "secret")).toBeNull();
+    expect(claimsFromBearer(null, "secret")).toBeNull();
   });
 });

@@ -11,16 +11,17 @@ export type VoiceConnectFlow = (typeof VOICE_CONNECT_FLOWS)[number];
 export const VOICE_TOKEN_TTL_SEC = 300;
 
 /**
- * Short-lived claims that identify who is connecting to the voice service and for which
- * flow. The token carries identity only; the prompt is fetched server to server.
+ * Short-lived claims, in the format the voice server verifies (HMAC-SHA256 over the base64url
+ * payload). `cid` is the call's conversation id, `companion` the Runtime companion, and `host`
+ * tells the voice server which product host to call back (it must be allow-listed there).
  */
 export interface VoiceConnectClaims {
-  v: 1;
-  sid: string;
   uid: string;
-  pid: "bloom";
-  flow: VoiceConnectFlow;
+  cid: string;
   tz: string;
+  companion: "bloom";
+  flow: VoiceConnectFlow;
+  host: string;
   iat: number;
   exp: number;
 }
@@ -54,9 +55,19 @@ export function verifyVoiceToken(
   } catch {
     return null;
   }
-  if (claims.v !== 1 || claims.pid !== "bloom") return null;
+  if (claims.companion !== "bloom") return null;
   if (!VOICE_CONNECT_FLOWS.includes(claims.flow)) return null;
   if (typeof claims.uid !== "string" || !claims.uid) return null;
+  if (typeof claims.cid !== "string" || !claims.cid) return null;
   if (typeof claims.exp !== "number" || claims.exp <= nowSec) return null;
   return claims;
+}
+
+/** Reads and verifies the `Authorization: Bearer <token>` the voice server sends back. */
+export function claimsFromBearer(
+  authorization: string | null,
+  secret: string
+): VoiceConnectClaims | null {
+  const match = /^Bearer\s+(.+)$/i.exec(authorization ?? "");
+  return match ? verifyVoiceToken(match[1].trim(), secret) : null;
 }

@@ -7,18 +7,22 @@ import { requireVoiceUser } from "@/lib/auth/requireVoiceUser";
 import { prisma } from "@/lib/prisma";
 import { verifyVoiceToken } from "@/lib/voice/connectToken";
 import { POST as connectRoute } from "@/app/api/bluum/voice/connect/route";
-import { POST as configRoute } from "@/app/api/bluum/voice/session-config/route";
+import { GET as contextRoute } from "@/app/api/voice/context/route";
+import { POST as turnRoute } from "@/app/api/voice/turn/route";
 
-function req(url: string, body: unknown, headers: Record<string, string> = {}) {
+function post(url: string, body: unknown, headers: Record<string, string> = {}) {
   return new Request(url, { method: "POST", body: JSON.stringify(body), headers }) as never;
 }
+function get(url: string, headers: Record<string, string> = {}) {
+  return new Request(url, { method: "GET", headers }) as never;
+}
 
-describe("voice connect + session-config routes", () => {
+describe("streaming voice routes", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     process.env.VOICE_SESSION_SECRET = "test-secret";
-    process.env.VOICE_SERVICE_KEY = "svc-key";
-    process.env.VOICE_PUBLIC_URL = "wss://voice.example/v1/realtime";
+    process.env.VOICE_PUBLIC_URL = "wss://voice.example/voice/v1/realtime";
+    process.env.VOICE_HOST_PUBLIC_URL = "https://b-attic.example/";
     vi.mocked(requireVoiceUser).mockResolvedValue({
       user: { id: "user_1", timezone: "Europe/London", displayName: "Kai" } as never,
       clerkUserId: "clerk_1",
@@ -26,42 +30,51 @@ describe("voice connect + session-config routes", () => {
     vi.mocked(prisma.user.findUnique).mockResolvedValue({ id: "user_1", displayName: "Kai" } as never);
   });
 
-  it("issues a token for the authenticated user and flow", async () => {
-    const res = await connectRoute(req("http://x/api/bluum/voice/connect", { flow: "first_reflection_core", timezone: "Asia/Tokyo" }));
+  it("issues a token the voice server can verify, naming this host", async () => {
+    const res = await connectRoute(post("http://x/api/bluum/voice/connect", { flow: "first_reflection_core", timezone: "Asia/Tokyo" }));
     expect(res.status).toBe(200);
     const body = await res.json();
-    expect(body.voiceUrl).toBe("wss://voice.example/v1/realtime");
+    expect(body.voiceUrl).toBe("wss://voice.example/voice/v1/realtime");
     const claims = verifyVoiceToken(body.token, "test-secret");
-    expect(claims).toMatchObject({ uid: "user_1", pid: "bloom", flow: "first_reflection_core", tz: "Asia/Tokyo" });
+    expect(claims).toMatchObject({
+      uid: "user_1",
+      companion: "bloom",
+      flow: "first_reflection_core",
+      tz: "Asia/Tokyo",
+      host: "https://b-attic.example",
+    });
+    expect(claims?.cid).toBeTruthy();
   });
 
   it("falls back to the stored timezone when the device one is invalid", async () => {
-    const res = await connectRoute(req("http://x/api/bluum/voice/connect", { flow: "onboarding", timezone: "Not/AZone" }));
-    const claims = verifyVoiceToken((await res.json()).token, "test-secret");
-    expect(claims?.tz).toBe("Europe/London");
+    const res = await connectRoute(post("http://x/api/bluum/voice/connect", { flow: "onboarding", timezone: "Not/AZone" }));
+    expect(verifyVoiceToken((await res.json()).token, "test-secret")?.tz).toBe("Europe/London");
   });
 
   it("rejects unknown flows", async () => {
-    const res = await connectRoute(req("http://x/api/bluum/voice/connect", { flow: "free_text" }));
+    const res = await connectRoute(post("http://x/api/bluum/voice/connect", { flow: "free_text" }));
     expect(res.status).toBe(400);
   });
 
-  it("exchanges a token for the flow prompt with the service key only", async () => {
-    const connect = await connectRoute(req("http://x/api/bluum/voice/connect", { flow: "first_reflection_core" }));
+  it("serves the unchanged flow prompt as application_context to the bearer", async () => {
+    const connect = await connectRoute(post("http://x/api/bluum/voice/connect", { flow: "first_reflection_core" }));
     const { token } = await connect.json();
 
-    const denied = await configRoute(req("http://x/api/bluum/voice/session-config", { token }));
-    expect(denied.status).toBe(401);
+    expect((await contextRoute(get("http://x/api/voice/context"))).status).toBe(401);
 
-    const ok = await configRoute(req("http://x/api/bluum/voice/session-config", { token }, { "x-voice-service-key": "svc-key" }));
+    const ok = await contextRoute(get("http://x/api/voice/context", { authorization: `Bearer ${token}` }));
     expect(ok.status).toBe(200);
-    const cfg = await ok.json();
-    expect(cfg).toMatchObject({ userId: "user_1", companionId: "bloom", flow: "first_reflection_core" });
-    expect(cfg.constitution).toContain("REFLECTION CORE PROMPT");
+    const body = await ok.json();
+    expect(body.history).toEqual([]);
+    expect(body.session_routing).toEqual({});
+    expect(body.application_context.context_type).toBe("product-context-v1");
+    expect(body.application_context.character_constitution).toContain("REFLECTION CORE PROMPT");
   });
 
-  it("rejects a bad token", async () => {
-    const res = await configRoute(req("http://x/api/bluum/voice/session-config", { token: "abcdefghijk.bad" }, { "x-voice-service-key": "svc-key" }));
-    expect(res.status).toBe(401);
+  it("acknowledges completed turns only for a valid bearer", async () => {
+    const connect = await connectRoute(post("http://x/api/bluum/voice/connect", { flow: "onboarding" }));
+    const { token } = await connect.json();
+    expect((await turnRoute(post("http://x/api/voice/turn", {}))).status).toBe(401);
+    expect((await turnRoute(post("http://x/api/voice/turn", { turn_id: "t" }, { authorization: `Bearer ${token}` }))).status).toBe(200);
   });
 });

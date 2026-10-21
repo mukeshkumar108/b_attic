@@ -34,7 +34,8 @@ export async function POST(request: NextRequest) {
 
     const secret = process.env.VOICE_SESSION_SECRET?.trim();
     const voiceUrl = process.env.VOICE_PUBLIC_URL?.trim();
-    if (!secret || !voiceUrl) {
+    const hostUrl = process.env.VOICE_HOST_PUBLIC_URL?.trim().replace(/\/$/, "");
+    if (!secret || !voiceUrl || !hostUrl) {
       return voiceErrorResponse(503, "voice_not_configured", "Streaming voice is not configured", true);
     }
 
@@ -47,12 +48,12 @@ export async function POST(request: NextRequest) {
     const now = Math.floor(Date.now() / 1000);
     const token = signVoiceToken(
       {
-        v: 1,
-        sid: randomUUID(),
         uid: user.id,
-        pid: "bloom",
-        flow: parsed.data.flow,
+        cid: randomUUID(),
         tz: timezone,
+        companion: "bloom",
+        flow: parsed.data.flow,
+        host: hostUrl,
         iat: now,
         exp: now + VOICE_TOKEN_TTL_SEC,
       },
