@@ -10,6 +10,9 @@ import {
   VOICE_TOKEN_TTL_SEC,
 } from "@/lib/voice/connectToken";
 
+// Product-owned cue the app sends as the first message so the assistant opens the session herself.
+const SESSION_OPENER = "(I've just opened the session.)";
+
 const connectSchema = z.object({
   flow: z.enum(VOICE_CONNECT_FLOWS),
   timezone: z.string().min(1).max(64).optional().nullable(),
@@ -60,7 +63,7 @@ export async function POST(request: NextRequest) {
       secret
     );
 
-    return NextResponse.json({ voiceUrl, token });
+    return NextResponse.json({ voiceUrl, token, opener: SESSION_OPENER });
   } catch (err) {
     if (err instanceof AuthError) {
       return voiceErrorResponse(err.statusCode, "unauthorized", err.message, false);
