@@ -92,26 +92,33 @@ const localHour = (d: Date, timeZone: string) => {
 };
 
 /** When this session is, relative to their earlier ones. Reports are newest first. */
-export function sessionContext(reports: ReportSignals[], timezone: string, now: Date = new Date()): { kind: "first_ever" | "first_today" | "again_today"; line: string } {
-  const hour = localHour(now, timezone);
-  const part = hour < 12 ? "morning" : hour < 18 ? "afternoon" : "evening";
-  if (!reports.length) return { kind: "first_ever", line: `This is their first session with you. It is ${part} where they are.` };
+/** The session the person chose decides what time of day it is for this conversation; the clock is not used (it is a prototype and a morning session may be run at any hour). */
+const PART_OF_DAY: Record<string, string> = {
+  morning: "It is the start of their day.",
+  evening: "It is the end of their day.",
+  daytime: "It is somewhere in the middle of their day.",
+};
+
+export function sessionContext(reports: ReportSignals[], timezone: string, now: Date = new Date(), flow?: string): { kind: "first_ever" | "first_today" | "again_today"; line: string } {
+  const part = PART_OF_DAY[flow ?? ""] ?? "";
+  const when = part ? ` ${part}` : "";
+  if (!reports.length) return { kind: "first_ever", line: `This is their first session with you.${when}` };
   const today = localDay(now, timezone);
   const earlierToday = reports.filter((r) => localDay(r.createdAt, timezone) === today).length;
   if (earlierToday > 0) {
-    return { kind: "again_today", line: `They have already had ${earlierToday} session${earlierToday > 1 ? "s" : ""} today; this is number ${earlierToday + 1}. It is ${part} where they are.` };
+    return { kind: "again_today", line: `They have already had ${earlierToday} session${earlierToday > 1 ? "s" : ""} today; this is number ${earlierToday + 1}.${when}` };
   }
   const days = Math.round((now.getTime() - reports[0].createdAt.getTime()) / 86_400_000);
   const since = days <= 1 ? "yesterday" : `${days} days ago`;
-  return { kind: "first_today", line: `This is their first session today (they last spoke ${since}). It is ${part} where they are.` };
+  return { kind: "first_today", line: `This is their first session today (they last spoke ${since}).${when}` };
 }
 
 /** The "what you know about them" block added to Bloom's prompt, or null when there is nothing to add. */
-export function buildDirective(memory: MemoryState, reports: ReportSignals[], now: Date = new Date(), timezone = "UTC"): Directive | null {
+export function buildDirective(memory: MemoryState, reports: ReportSignals[], now: Date = new Date(), timezone = "UTC", flow?: string): Directive | null {
   const lines: string[] = [];
   const applied: string[] = [];
 
-  const ctx = sessionContext(reports, timezone, now);
+  const ctx = sessionContext(reports, timezone, now, flow);
   lines.push(ctx.line);
   applied.push(`session_${ctx.kind}`);
 

@@ -60,3 +60,13 @@ describe("modular flows", () => {
     }
   });
 });
+
+describe("openings", () => {
+  it("are meant to feel like a friend dropping in: no stock how-are-you, varied, with energy", () => {
+    const kernelAndRules = loadFlowConstitution("morning");
+    expect(kernelAndRules).toMatch(/Never the stiff "hello, how are you/);
+    expect(kernelAndRules).toMatch(/Never open two sessions the same way/);
+    expect(kernelAndRules).toMatch(/start of their day whatever the time on the clock/);
+    expect(loadFlowConstitution("daytime")).not.toMatch(/Greet them in one warm line/);
+  });
+});

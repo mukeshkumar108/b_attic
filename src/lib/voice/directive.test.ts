@@ -81,11 +81,14 @@ describe("sessionContext", () => {
     expect(sessionContext([], "Europe/London", early).kind).toBe("first_ever");
   });
 
-  it("says how long it has been and what part of the day it is", () => {
-    const evening = new Date("2026-10-25T19:00:00Z");
-    const c = sessionContext([at("2026-10-22T10:00:00Z")], "Europe/London", evening);
-    expect(c.line).toMatch(/3 days ago/);
-    expect(c.line).toMatch(/evening/);
+  it("says how long it has been, and takes the time of day from the session chosen, not the clock", () => {
+    const afternoon = new Date("2026-10-25T15:00:00Z");
+    const morning = sessionContext([at("2026-10-22T10:00:00Z")], "Europe/London", afternoon, "morning");
+    expect(morning.line).toMatch(/3 days ago/);
+    expect(morning.line).toMatch(/start of their day/);
+    expect(morning.line).not.toMatch(/afternoon/i);
+    expect(sessionContext([], "Europe/London", afternoon, "evening").line).toMatch(/end of their day/);
+    expect(sessionContext([], "Europe/London", afternoon, "ten_things").line).not.toMatch(/day\./);
   });
 });
 
