@@ -212,7 +212,7 @@ export function mergeMemory(existing: MemoryState, delta: MemoryDelta, conversat
     const n = note?.trim();
     if (n && !state.style.notes.some((x) => norm(x) === norm(n))) {
       state.style.notes.push(n.slice(0, 160));
-      applied.push({ kind: "style", id: `style_${slug(n)}`, action: "added", basis: "" });
+      applied.push({ kind: "style", id: `style_${slug(n)}`, action: "added", basis: n.slice(0, 160) });
     }
   }
 

@@ -43,3 +43,10 @@ describe("mergeMemory", () => {
     expect(mergeMemory(m1, {}, "c2", later(5)).memory.facts).toHaveLength(0);
   });
 });
+
+describe("style notes", () => {
+  it("record the note itself as the basis so a reviewer can read it", () => {
+    const r = mergeMemory(EMPTY_MEMORY, { style: { notes: ["Answers in a few words"] } }, "c1", t0);
+    expect(r.applied[0]).toMatchObject({ kind: "style", basis: "Answers in a few words" });
+  });
+});
