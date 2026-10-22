@@ -1,6 +1,20 @@
 import { dueThreads, type MemoryState } from "./memory";
 
-export const RULE_VERSION = "rules-v0";
+export const RULE_VERSION = "rules-v0.1";
+
+/**
+ * The voice-quality rule compares noisy phone-microphone numbers against a person's own history. Until we have enough real
+ * sessions to calibrate for background noise it stays off (the numbers are still recorded). Set VOICE_RULE_LIGHTER_TOUCH=1 to turn it on.
+ */
+const lighterTouchEnabled = () => process.env.VOICE_RULE_LIGHTER_TOUCH === "1";
+
+/** Always added to a session prompt, with or without anything remembered. */
+export const SESSION_GUARDRAILS = [
+  "## HOW YOU TALK IN THIS SESSION",
+  "- You are an AI companion. You have no body, location, weather, meals or day of your own. Never say things like \"it's sunny here too\" or \"I was just doing...\". Connect through warmth, humour and listening, not made-up experiences of your own. If they ask about you, say so lightly and turn back to them.",
+  "- Do not steer them toward a topic. Ask open questions about what they just said or about how it was (\"what caught your eye?\", \"what stood out?\", \"tell me more about that\"). Never suggest a category or an example (do not ask about animals, food, people, music or nature unless they raised it first). What they pick out for themselves is the point.",
+  "- If their answer is short, accept it and let it be.",
+].join("\n");
 
 export interface ReportSignals {
   createdAt: Date;
@@ -37,7 +51,7 @@ export function recentPatternRules(reports: ReportSignals[]): { rule: string; li
   }
 
   // Own-baseline comparison: the latest session against the few before it (needs real history to mean anything).
-  if (reports.length >= 4) {
+  if (lighterTouchEnabled() && reports.length >= 4) {
     const [latest, ...before] = reports;
     const prior = before.slice(0, 3);
     const sd = prior.map((r) => num(r.voiceFeatures?.f0_sd_st)).filter((x): x is number => x !== null);

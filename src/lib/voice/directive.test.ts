@@ -1,5 +1,5 @@
-import { describe, expect, it } from "vitest";
-import { buildDirective, recentPatternRules, type ReportSignals } from "./directive";
+import { afterEach, describe, expect, it } from "vitest";
+import { buildDirective, recentPatternRules, SESSION_GUARDRAILS, type ReportSignals } from "./directive";
 import { EMPTY_MEMORY, mergeMemory } from "./memory";
 
 const now = new Date("2026-10-22T10:00:00Z");
@@ -38,12 +38,31 @@ describe("recentPatternRules", () => {
     expect(recentPatternRules(three).map((r) => r.rule)).toContain("relational_pivot");
   });
 
+  afterEach(() => {
+    delete process.env.VOICE_RULE_LIGHTER_TOUCH;
+  });
+
+  it("keeps the voice-based lighter-touch rule off unless switched on", () => {
+    const base = { f0_sd_st: 3.0, pause_ratio: 0.2 };
+    const flat = { f0_sd_st: 1.9, pause_ratio: 0.32 };
+    const reports = [rep(null, flat), rep(null, base), rep(null, base), rep(null, base)];
+    expect(recentPatternRules(reports)).toEqual([]);
+  });
+
   it("asks for a lighter touch only when the latest session is flatter than their own earlier ones", () => {
+    process.env.VOICE_RULE_LIGHTER_TOUCH = "1";
     const base = { f0_sd_st: 3.0, pause_ratio: 0.2 };
     const flat = { f0_sd_st: 1.9, pause_ratio: 0.32 };
     const reports = [rep(null, flat), rep(null, base), rep(null, base), rep(null, base)];
     expect(recentPatternRules(reports).map((r) => r.rule)).toContain("lighter_touch");
     expect(recentPatternRules([rep(null, base), rep(null, base), rep(null, base), rep(null, base)])).toEqual([]);
     expect(recentPatternRules(reports.slice(0, 3))).toEqual([]); // not enough history
+  });
+});
+
+describe("SESSION_GUARDRAILS", () => {
+  it("forbids made-up personal experience and topic steering", () => {
+    expect(SESSION_GUARDRAILS).toMatch(/no body, location, weather/);
+    expect(SESSION_GUARDRAILS).toMatch(/Never suggest a category/);
   });
 });

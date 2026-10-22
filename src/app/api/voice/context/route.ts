@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { claimsFromBearer } from "@/lib/voice/connectToken";
 import { loadFlowConstitution } from "@/lib/voice/connectPrompt";
-import { buildDirective } from "@/lib/voice/directive";
+import { buildDirective, SESSION_GUARDRAILS } from "@/lib/voice/directive";
 import { asMemoryState, expireThreads } from "@/lib/voice/memory";
 
 /**
@@ -32,7 +32,7 @@ export async function GET(request: NextRequest) {
     session_routing: {},
     application_context: {
       context_type: "product-context-v1",
-      character_constitution: directive ? `${constitution}\n\n${directive}` : constitution,
+      character_constitution: [constitution, SESSION_GUARDRAILS, directive].filter(Boolean).join("\n\n"),
     },
   });
 }
