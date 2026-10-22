@@ -66,7 +66,7 @@ describe("openings", () => {
     const kernelAndRules = loadFlowConstitution("morning");
     expect(kernelAndRules).toMatch(/Never the stiff "hello, how are you/);
     expect(kernelAndRules).toMatch(/Never open two sessions the same way/);
-    expect(kernelAndRules).toMatch(/start of their day whatever the time on the clock/);
+    expect(kernelAndRules).toMatch(/start of their day whatever the time on the clock, and never say "afternoon"/);
     expect(loadFlowConstitution("daytime")).not.toMatch(/Greet them in one warm line/);
   });
 });
