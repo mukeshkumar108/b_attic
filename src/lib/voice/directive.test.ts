@@ -1,13 +1,13 @@
 import { afterEach, describe, expect, it } from "vitest";
-import { buildDirective, recentPatternRules, SESSION_GUARDRAILS, type ReportSignals } from "./directive";
+import { buildDirective, recentPatternRules, SESSION_GUARDRAILS, sessionContext, type ReportSignals } from "./directive";
 import { EMPTY_MEMORY, mergeMemory } from "./memory";
 
 const now = new Date("2026-10-22T10:00:00Z");
 const rep = (profile: Record<string, unknown> | null, vf: Record<string, unknown> | null = null): ReportSignals => ({ createdAt: now, profile, voiceFeatures: vf });
 
 describe("buildDirective", () => {
-  it("returns null with nothing known", () => {
-    expect(buildDirective(EMPTY_MEMORY, [], now)).toBeNull();
+  it("always says when this session is, even with nothing remembered", () => {
+    expect(buildDirective(EMPTY_MEMORY, [], now)!.text).toMatch(/first session with you/);
   });
 
   it("offers a due, nominal thread once the date has come and never a sensitive one", () => {
@@ -15,7 +15,7 @@ describe("buildDirective", () => {
       { topic: "Job interview", notBeforeDays: 2, expiresInDays: 9, suggestedCheckin: "How did the interview go?" },
       { topic: "Hospital results", sensitivity: "sensitive", notBeforeDays: 0 },
     ] }, "c1", now).memory;
-    expect(buildDirective(m, [], new Date("2026-10-23T10:00:00Z"))).toBeNull();
+    expect(buildDirective(m, [], new Date("2026-10-23T10:00:00Z"))!.text).not.toContain("interview");
     const d = buildDirective(m, [], new Date("2026-10-25T10:00:00Z"))!;
     expect(d.text).toContain("How did the interview go?");
     expect(d.text).not.toContain("Hospital");
@@ -64,5 +64,35 @@ describe("SESSION_GUARDRAILS", () => {
   it("forbids made-up personal experience and topic steering", () => {
     expect(SESSION_GUARDRAILS).toMatch(/no body, location, weather/);
     expect(SESSION_GUARDRAILS).toMatch(/Never suggest a category/);
+    expect(SESSION_GUARDRAILS).toMatch(/## OPENING/);
+    expect(SESSION_GUARDRAILS).toMatch(/## CLOSING[\s\S]*Do not ask a question/);
+  });
+});
+
+describe("sessionContext", () => {
+  const at = (iso: string): ReportSignals => ({ createdAt: new Date(iso), profile: null, voiceFeatures: null });
+  it("tells a first session of the day from a second, in the person's own timezone", () => {
+    const early = new Date("2026-10-22T08:00:00Z"); // 09:00 in London (BST)
+    expect(sessionContext([at("2026-10-21T18:00:00Z")], "Europe/London", early)).toMatchObject({ kind: "first_today" });
+    expect(sessionContext([at("2026-10-22T06:30:00Z")], "Europe/London", early)).toMatchObject({ kind: "again_today" });
+    // 23:30 UTC on the 21st is already the 22nd in London
+    expect(sessionContext([at("2026-10-21T23:30:00Z")], "Europe/London", early).kind).toBe("again_today");
+    expect(sessionContext([], "Europe/London", early).kind).toBe("first_ever");
+  });
+
+  it("says how long it has been and what part of the day it is", () => {
+    const evening = new Date("2026-10-25T19:00:00Z");
+    const c = sessionContext([at("2026-10-22T10:00:00Z")], "Europe/London", evening);
+    expect(c.line).toMatch(/3 days ago/);
+    expect(c.line).toMatch(/evening/);
+  });
+});
+
+describe("habits in the directive", () => {
+  it("presents a habit as known, not news", () => {
+    const m = mergeMemory(EMPTY_MEMORY, { facts: [{ fact: "Walks five to six miles daily", recurring: true }] }, "c1", now).memory;
+    const d = buildDirective(m, [], now)!;
+    expect(d.text).toMatch(/Known, not news: Walks five to six miles daily/);
+    expect(d.applied).toContain("habits");
   });
 });

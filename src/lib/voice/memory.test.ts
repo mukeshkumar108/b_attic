@@ -50,3 +50,33 @@ describe("style notes", () => {
     expect(r.applied[0]).toMatchObject({ kind: "style", basis: "Answers in a few words" });
   });
 });
+
+describe("habits", () => {
+  it("merges the same fact said in different words and makes it a habit that stays", () => {
+    const a = mergeMemory(EMPTY_MEMORY, { facts: [{ fact: "Walks 5-6 miles around the village through fields", category: "habit", expiresInDays: 14 }] }, "c1", t0).memory;
+    const b = mergeMemory(a, { facts: [{ fact: "Walks five or six miles through the fields every day", recurring: true }] }, "c2", later(1));
+    expect(b.memory.facts).toHaveLength(1);
+    expect(b.memory.facts[0]).toMatchObject({ count: 2, habit: true, lastMentioned: later(1).toISOString() });
+    expect(new Date(b.memory.facts[0].expiresAt).getTime()).toBeGreaterThan(later(300).getTime());
+  });
+
+  it("trusts the model's ref when the wording differs completely", () => {
+    const a = mergeMemory(EMPTY_MEMORY, { facts: [{ fact: "Walks 5-6 miles around the village" }] }, "c1", t0).memory;
+    const b = mergeMemory(a, { facts: [{ ref: a.facts[0].id, fact: "Goes out for a long circular route daily", recurring: true }] }, "c2", later(1)).memory;
+    expect(b.facts).toHaveLength(1);
+    expect(b.facts[0]).toMatchObject({ count: 2, habit: true });
+  });
+
+  it("merges by ref and does not merge unrelated facts", () => {
+    const a = mergeMemory(EMPTY_MEMORY, { facts: [{ fact: "Hurt knee on a walk" }, { fact: "Has a job interview on Tuesday" }] }, "c1", t0).memory;
+    expect(a.facts).toHaveLength(2);
+    const b = mergeMemory(a, { facts: [{ ref: a.facts[1].id, fact: "Interview went well" }] }, "c2", later(1)).memory;
+    expect(b.facts).toHaveLength(2);
+    expect(b.facts[1].count).toBe(2);
+  });
+
+  it("a one-off fact still expires", () => {
+    const a = mergeMemory(EMPTY_MEMORY, { facts: [{ fact: "Had coffee in the sun", expiresInDays: 1 }] }, "c1", t0).memory;
+    expect(mergeMemory(a, {}, "c2", later(3)).memory.facts).toHaveLength(0);
+  });
+});

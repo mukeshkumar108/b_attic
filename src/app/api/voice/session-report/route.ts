@@ -7,8 +7,8 @@ import { asMemoryState, mergeMemory, REPORT_GRACE_SEC } from "@/lib/voice/memory
 const sensitivity = z.enum(["nominal", "sensitive"]);
 const delta = z.object({
   people: z.array(z.object({ ref: z.string().optional(), name: z.string(), relation: z.string().optional(), meaning: z.string().optional(), sensitivity: sensitivity.optional(), basis: z.string().optional() })).optional(),
-  themes: z.array(z.object({ label: z.string(), sensitivity: sensitivity.optional(), basis: z.string().optional() })).optional(),
-  facts: z.array(z.object({ fact: z.string(), category: z.string().optional(), sensitivity: sensitivity.optional(), expiresInDays: z.number().optional(), basis: z.string().optional() })).optional(),
+  themes: z.array(z.object({ ref: z.string().optional(), label: z.string(), sensitivity: sensitivity.optional(), basis: z.string().optional() })).optional(),
+  facts: z.array(z.object({ ref: z.string().optional(), recurring: z.boolean().optional(), fact: z.string(), category: z.string().optional(), sensitivity: sensitivity.optional(), expiresInDays: z.number().optional(), basis: z.string().optional() })).optional(),
   threads: z.array(z.object({ ref: z.string().optional(), topic: z.string(), status: z.enum(["open", "followed_up", "resolved", "expired"]).optional(), notBeforeDays: z.number().optional(), expiresInDays: z.number().optional(), suggestedCheckin: z.string().optional(), sensitivity: sensitivity.optional(), basis: z.string().optional() })).optional(),
   style: z.object({ notes: z.array(z.string()).optional() }).optional(),
 });

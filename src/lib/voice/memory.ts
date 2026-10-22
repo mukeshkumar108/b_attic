@@ -37,6 +37,11 @@ export interface Fact extends Traced {
   category: string;
   createdAt: string;
   expiresAt: string;
+  // A fact said more than once, or said to be regular ("every day"), is a habit: known, not news.
+  count?: number;
+  firstMentioned?: string;
+  lastMentioned?: string;
+  habit?: boolean;
 }
 export interface Thread extends Traced {
   topic: string;
@@ -64,8 +69,8 @@ export interface LastDirective {
 
 export interface MemoryDelta {
   people?: { ref?: string; name: string; relation?: string; meaning?: string; sensitivity?: Sensitivity; basis?: string }[];
-  themes?: { label: string; sensitivity?: Sensitivity; basis?: string }[];
-  facts?: { fact: string; category?: string; sensitivity?: Sensitivity; expiresInDays?: number; basis?: string }[];
+  themes?: { ref?: string; label: string; sensitivity?: Sensitivity; basis?: string }[];
+  facts?: { ref?: string; fact: string; category?: string; sensitivity?: Sensitivity; expiresInDays?: number; recurring?: boolean; basis?: string }[];
   threads?: {
     ref?: string;
     topic: string;
@@ -84,7 +89,22 @@ export const EMPTY_MEMORY: MemoryState = { people: [], themes: [], facts: [], op
 const CAP = { people: 50, themes: 30, facts: 60, openThreads: 40, notes: 10 };
 const DEFAULT_FACT_DAYS = { nominal: 45, sensitive: 14 };
 const DEFAULT_THREAD_DAYS = { nominal: 7, sensitive: 4 };
+const HABIT_DAYS = 365;
 const DAY_MS = 24 * 60 * 60 * 1000;
+
+const STOP = new Set(["a", "an", "the", "and", "or", "of", "to", "in", "on", "at", "with", "for", "by", "is", "are", "was", "has", "had", "have", "this", "that", "their", "they", "them", "his", "her", "my", "around", "about", "through", "every", "day", "daily", "regularly", "usually", "today", "morning"]);
+const stem = (w: string) => (w.length > 3 && w.endsWith("s") ? w.slice(0, -1) : w);
+const tokens = (s: string) => new Set(norm(s).split(" ").filter((w) => w.length > 2 && !STOP.has(w)).map(stem));
+
+/** The same thing said in different words: enough shared content words (Jaccard over tokens). */
+export function similar(a: string, b: string): boolean {
+  const x = tokens(a);
+  const y = tokens(b);
+  if (!x.size || !y.size) return norm(a) === norm(b);
+  let shared = 0;
+  x.forEach((w) => y.has(w) && shared++);
+  return shared / (x.size + y.size - shared) >= 0.5;
+}
 
 const norm = (s: string) => s.toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
 const slug = (s: string) => norm(s).replace(/ /g, "_").slice(0, 32) || "item";
@@ -150,7 +170,7 @@ export function mergeMemory(existing: MemoryState, delta: MemoryDelta, conversat
 
   for (const t of delta.themes ?? []) {
     if (!t?.label?.trim()) continue;
-    const hit = state.themes.find((x) => norm(x.label) === norm(t.label));
+    const hit = state.themes.find((x) => x.id === t.ref || norm(x.label) === norm(t.label) || similar(x.label, t.label));
     if (hit) {
       hit.count += 1;
       hit.lastMentioned = iso;
@@ -170,16 +190,22 @@ export function mergeMemory(existing: MemoryState, delta: MemoryDelta, conversat
     if (!f?.fact?.trim()) continue;
     const sensitivity = sens(f.sensitivity);
     const days = f.expiresInDays && f.expiresInDays > 0 ? f.expiresInDays : DEFAULT_FACT_DAYS[sensitivity];
-    const hit = state.facts.find((x) => norm(x.fact) === norm(f.fact));
+    const hit = state.facts.find((x) => x.id === f.ref || norm(x.fact) === norm(f.fact) || similar(x.fact, f.fact));
     if (hit) {
-      hit.expiresAt = addDays(now, days);
+      hit.count = (hit.count ?? 1) + 1;
+      hit.firstMentioned = hit.firstMentioned ?? hit.createdAt;
+      hit.lastMentioned = iso;
       hit.source = conversationId;
+      if (f.recurring || hit.count >= 2) hit.habit = true;
+      hit.expiresAt = addDays(now, hit.habit ? HABIT_DAYS : days);
+      if (f.basis) hit.basis = basisOf(f.basis);
       applied.push({ kind: "fact", id: hit.id, action: "updated", basis: hit.basis });
     } else {
       const id = `fact_${slug(f.fact)}_${day(now)}`;
       state.facts.push({
         id, fact: f.fact.trim(), category: f.category?.trim() || "general", sensitivity, basis: basisOf(f.basis),
-        source: conversationId, correct: null, createdAt: iso, expiresAt: addDays(now, days),
+        source: conversationId, correct: null, createdAt: iso, firstMentioned: iso, lastMentioned: iso, count: 1,
+        habit: !!f.recurring, expiresAt: addDays(now, f.recurring ? HABIT_DAYS : days),
       });
       applied.push({ kind: "fact", id, action: "added", basis: basisOf(f.basis) });
     }
