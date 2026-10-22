@@ -3,6 +3,7 @@ import { z } from "zod";
 import { prisma } from "@/lib/prisma";
 import { claimsFromBearer } from "@/lib/voice/connectToken";
 import { asMemoryState, mergeMemory, REPORT_GRACE_SEC } from "@/lib/voice/memory";
+import { getDateLocalForUser } from "@/lib/bluum/dateLocal";
 
 /** What a session's card is about, so the library can label it. */
 const CARD_KIND: Record<string, string> = { morning: "intention", ten_things: "self" };
@@ -65,5 +66,19 @@ export async function POST(request: NextRequest) {
     }),
     prisma.userMemory.upsert({ where: { userId: claims.uid }, create: { userId: claims.uid, ...memoryData }, update: memoryData }),
   ]);
+
+  // A finished spoken session that produced a card counts for the day's streak, in the person's own day.
+  if (b.card && (b.card as { moment?: unknown }).moment) {
+    try {
+      const dateLocal = getDateLocalForUser(claims.tz, new Date());
+      await prisma.dailyStatus.upsert({
+        where: { userId_dateLocal: { userId: claims.uid, dateLocal } },
+        create: { userId: claims.uid, dateLocal, promptId: "voice", promptText: "", hasReflection: true },
+        update: { hasReflection: true },
+      });
+    } catch (err) {
+      console.error("session-report: streak update failed:", err);
+    }
+  }
   return NextResponse.json({ ok: true, applied: applied.length });
 }
