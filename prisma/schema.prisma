@@ -81,6 +81,8 @@ model User {
   userSummaries        UserSummary[]
   voiceSessions        VoiceSession[]
   voiceTurns           VoiceTurn[]
+  voiceSessionReports  VoiceSessionReport[]
+  userMemory           UserMemory?
   activityEngagements  ActivityEngagement[]
 }
 
@@ -329,4 +331,47 @@ model ActivityEngagement {
   @@index([userId, activityType, activitySlug])
   @@index([userId, createdAt])
   @@index([sessionId])
+}
+
+// ============================================================================
+// Voice session report - written once when a Bloom call ends (no transcript is stored here)
+// ============================================================================
+
+model VoiceSessionReport {
+  id              String   @id @default(cuid())
+  userId          String
+  conversationId  String   @unique
+  flow            String?
+  durationSeconds Int?
+  card            Json? // { headline, moment, theme, tags }
+  profile         Json? // descriptive reflection profile, no total score
+  voiceFeatures   Json? // session summary of the voice numbers
+  memoryUpdates   Json? // what this session added to UserMemory, each item with a paraphrased basis
+  costUsd         Float?
+  models          Json?
+  promptVersion   String?
+  ruleVersion     String?
+  createdAt       DateTime @default(now())
+
+  user User @relation(fields: [userId], references: [id])
+
+  @@index([userId, createdAt])
+}
+
+// ============================================================================
+// User memory - what matters to this person, rolled up across sessions
+// ============================================================================
+
+model UserMemory {
+  id          String   @id @default(cuid())
+  userId      String   @unique
+  people      Json     @default("[]")
+  themes      Json     @default("[]")
+  facts       Json     @default("[]")
+  openThreads Json     @default("[]")
+  style       Json     @default("{}")
+  updatedAt   DateTime @updatedAt
+  createdAt   DateTime @default(now())
+
+  user User @relation(fields: [userId], references: [id])
 }

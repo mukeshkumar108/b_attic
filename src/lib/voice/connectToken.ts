@@ -42,7 +42,8 @@ export function signVoiceToken(claims: VoiceConnectClaims, secret: string): stri
 export function verifyVoiceToken(
   token: string,
   secret: string,
-  nowSec: number = Math.floor(Date.now() / 1000)
+  nowSec: number = Math.floor(Date.now() / 1000),
+  graceSec = 0
 ): VoiceConnectClaims | null {
   const [body, signature, ...rest] = token.split(".");
   if (!body || !signature || rest.length > 0) return null;
@@ -59,15 +60,16 @@ export function verifyVoiceToken(
   if (!VOICE_CONNECT_FLOWS.includes(claims.flow)) return null;
   if (typeof claims.uid !== "string" || !claims.uid) return null;
   if (typeof claims.cid !== "string" || !claims.cid) return null;
-  if (typeof claims.exp !== "number" || claims.exp <= nowSec) return null;
+  if (typeof claims.exp !== "number" || claims.exp + graceSec <= nowSec) return null;
   return claims;
 }
 
 /** Reads and verifies the `Authorization: Bearer <token>` the voice server sends back. */
 export function claimsFromBearer(
   authorization: string | null,
-  secret: string
+  secret: string,
+  graceSec = 0
 ): VoiceConnectClaims | null {
   const match = /^Bearer\s+(.+)$/i.exec(authorization ?? "");
-  return match ? verifyVoiceToken(match[1].trim(), secret) : null;
+  return match ? verifyVoiceToken(match[1].trim(), secret, Math.floor(Date.now() / 1000), graceSec) : null;
 }
