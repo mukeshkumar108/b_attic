@@ -47,6 +47,7 @@ export async function POST(request: NextRequest) {
 
   const row = await prisma.userMemory.findUnique({ where: { userId: claims.uid } });
   const { memory, applied } = mergeMemory(asMemoryState(row as never), b.memoryDelta ?? {}, claims.cid);
+  const directive = memory.style.lastDirective?.conversationId === claims.cid ? memory.style.lastDirective : null;
   const json = (v: unknown) => (v ?? undefined) as never;
   const memoryData = { people: json(memory.people), themes: json(memory.themes), facts: json(memory.facts), openThreads: json(memory.openThreads), style: json(memory.style) };
 
@@ -55,7 +56,8 @@ export async function POST(request: NextRequest) {
       data: {
         userId: claims.uid, conversationId: claims.cid, flow: b.flow ?? claims.flow, durationSeconds: b.durationSeconds,
         card: json(b.card), profile: json(b.profile), voiceFeatures: json(b.voiceFeatures), memoryUpdates: json(applied),
-        costUsd: b.costUsd, models: json(b.models), promptVersion: b.promptVersion, ruleVersion: b.ruleVersion,
+        costUsd: b.costUsd, models: json({ ...b.models, ...(directive ? { directive: directive.applied } : {}) }),
+        promptVersion: b.promptVersion, ruleVersion: directive?.ruleVersion ?? b.ruleVersion,
       },
     }),
     prisma.userMemory.upsert({ where: { userId: claims.uid }, create: { userId: claims.uid, ...memoryData }, update: memoryData }),

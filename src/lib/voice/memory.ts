@@ -51,7 +51,15 @@ export interface MemoryState {
   themes: Theme[];
   facts: Fact[];
   openThreads: Thread[];
-  style: { notes: string[] };
+  style: { notes: string[]; lastDirective?: LastDirective };
+}
+
+/** What the last session start told Bloom, so the report can record which rules were active. */
+export interface LastDirective {
+  conversationId: string;
+  ruleVersion: string;
+  applied: string[];
+  at: string;
 }
 
 export interface MemoryDelta {
@@ -92,7 +100,7 @@ export function asMemoryState(raw: Partial<Record<keyof MemoryState, unknown>> |
     themes: list<Theme>(raw?.themes),
     facts: list<Fact>(raw?.facts),
     openThreads: list<Thread>(raw?.openThreads),
-    style: { notes: list<string>(style?.notes) },
+    style: { ...(style as object), notes: list<string>(style?.notes) } as MemoryState["style"],
   };
 }
 

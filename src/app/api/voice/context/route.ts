@@ -2,6 +2,8 @@ import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { claimsFromBearer } from "@/lib/voice/connectToken";
 import { loadFlowConstitution } from "@/lib/voice/connectPrompt";
+import { buildDirective } from "@/lib/voice/directive";
+import { asMemoryState, expireThreads } from "@/lib/voice/memory";
 
 /**
  * Called by the voice server when a call connects (bearer = the connect token). Returns the
@@ -20,14 +22,53 @@ export async function GET(request: NextRequest) {
     return NextResponse.json({ error: "user_not_found" }, { status: 404 });
   }
 
+  const constitution = loadFlowConstitution(claims.flow, {
+    displayName: (user as { displayName?: string | null }).displayName,
+  });
+  const directive = await personalise(claims.uid, claims.cid);
+
   return NextResponse.json({
     history: [],
     session_routing: {},
     application_context: {
       context_type: "product-context-v1",
-      character_constitution: loadFlowConstitution(claims.flow, {
-        displayName: (user as { displayName?: string | null }).displayName,
-      }),
+      character_constitution: directive ? `${constitution}\n\n${directive}` : constitution,
     },
   });
+}
+
+/**
+ * What we know about this person, as a short block for the prompt. A thread that is surfaced here is marked
+ * followed_up so it is only offered once. Never blocks the call: any failure just means no personalisation.
+ */
+async function personalise(userId: string, conversationId: string): Promise<string | null> {
+  try {
+    const row = await prisma.userMemory.findUnique({ where: { userId } });
+    if (!row) return null;
+    const now = new Date();
+    const memory = expireThreads(asMemoryState(row as never), now);
+    const reports = await prisma.voiceSessionReport.findMany({
+      where: { userId },
+      orderBy: { createdAt: "desc" },
+      take: 5,
+      select: { createdAt: true, profile: true, voiceFeatures: true },
+    });
+    const directive = buildDirective(
+      memory,
+      reports.map((r) => ({ createdAt: r.createdAt, profile: r.profile as never, voiceFeatures: r.voiceFeatures as never })),
+      now
+    );
+    if (!directive) return null;
+    const surfaced = new Set(directive.surfacedThreadIds);
+    const next = {
+      ...memory,
+      openThreads: memory.openThreads.map((t) => (surfaced.has(t.id) ? { ...t, status: "followed_up" as const } : t)),
+      style: { ...memory.style, lastDirective: { conversationId, ruleVersion: directive.ruleVersion, applied: directive.applied, at: now.toISOString() } },
+    };
+    await prisma.userMemory.update({ where: { userId }, data: { openThreads: next.openThreads as never, style: next.style as never } });
+    return directive.text;
+  } catch (err) {
+    console.error("voice context personalisation failed:", err);
+    return null;
+  }
 }
