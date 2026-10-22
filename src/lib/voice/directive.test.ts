@@ -75,6 +75,7 @@ describe("sessionContext", () => {
     const early = new Date("2026-10-22T08:00:00Z"); // 09:00 in London (BST)
     expect(sessionContext([at("2026-10-21T18:00:00Z")], "Europe/London", early)).toMatchObject({ kind: "first_today" });
     expect(sessionContext([at("2026-10-22T06:30:00Z")], "Europe/London", early)).toMatchObject({ kind: "again_today" });
+    expect(sessionContext([at("2026-10-22T06:30:00Z")], "Europe/London", early).line).not.toMatch(/welcome|ask/i);
     // 23:30 UTC on the 21st is already the 22nd in London
     expect(sessionContext([at("2026-10-21T23:30:00Z")], "Europe/London", early).kind).toBe("again_today");
     expect(sessionContext([], "Europe/London", early).kind).toBe("first_ever");
@@ -94,5 +95,14 @@ describe("habits in the directive", () => {
     const d = buildDirective(m, [], now)!;
     expect(d.text).toMatch(/Known, not news: Walks five to six miles daily/);
     expect(d.applied).toContain("habits");
+  });
+});
+
+describe("things they like about themselves", () => {
+  it("are offered back lightly, and kept out of the habits list", () => {
+    const m = mergeMemory(EMPTY_MEMORY, { facts: [{ fact: "Is a good listener", category: "self_regard", recurring: true }] }, "c1", now).memory;
+    const d = buildDirective(m, [], now)!;
+    expect(d.text).toMatch(/like about themselves: Is a good listener/);
+    expect(d.text).not.toMatch(/Known, not news: Is a good listener/);
   });
 });

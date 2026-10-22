@@ -76,6 +76,7 @@ export interface MemoryDelta {
     topic: string;
     status?: ThreadStatus;
     notBeforeDays?: number;
+    notBeforeHour?: number; // local hour today (0-23) in the person's timezone
     expiresInDays?: number;
     suggestedCheckin?: string;
     sensitivity?: Sensitivity;
@@ -139,7 +140,19 @@ export interface MergeResult {
   applied: { kind: "person" | "theme" | "fact" | "thread" | "style"; id: string; action: "added" | "updated"; basis: string }[];
 }
 
-export function mergeMemory(existing: MemoryState, delta: MemoryDelta, conversationId: string, now: Date = new Date()): MergeResult {
+/** Today's date at `hour`:00 in `timeZone`, as an instant. */
+export function atLocalHour(now: Date, timeZone: string, hour: number): Date {
+  try {
+    const ymd = new Intl.DateTimeFormat("en-CA", { timeZone, year: "numeric", month: "2-digit", day: "2-digit" }).format(now);
+    const offset = new Date(now.toLocaleString("en-US", { timeZone })).getTime() - new Date(now.toLocaleString("en-US", { timeZone: "UTC" })).getTime();
+    const [y, m, d] = ymd.split("-").map(Number);
+    return new Date(Date.UTC(y, m - 1, d, hour, 0, 0) - offset);
+  } catch {
+    return new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate(), hour));
+  }
+}
+
+export function mergeMemory(existing: MemoryState, delta: MemoryDelta, conversationId: string, now: Date = new Date(), timeZone = "UTC"): MergeResult {
   const state = expireThreads(structuredClone(existing), now);
   const applied: MergeResult["applied"] = [];
   const iso = now.toISOString();
@@ -223,7 +236,9 @@ export function mergeMemory(existing: MemoryState, delta: MemoryDelta, conversat
     } else if (t.topic?.trim()) {
       const sensitivity = sens(t.sensitivity);
       const id = `thread_${slug(t.topic)}_${day(now)}`;
-      const notBefore = addDays(now, Math.max(0, t.notBeforeDays ?? 1));
+      const notBefore = typeof t.notBeforeHour === "number" && t.notBeforeHour >= 0 && t.notBeforeHour <= 23
+        ? atLocalHour(now, timeZone, t.notBeforeHour).toISOString()
+        : addDays(now, Math.max(0, t.notBeforeDays ?? 1));
       state.openThreads.push({
         id, topic: t.topic.trim(), status: t.status ?? "open", sensitivity, basis: basisOf(t.basis), source: conversationId,
         correct: null, notBefore, createdAt: iso,

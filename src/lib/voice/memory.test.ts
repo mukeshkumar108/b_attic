@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { dueThreads, EMPTY_MEMORY, expireThreads, mergeMemory } from "./memory";
+import { atLocalHour, dueThreads, EMPTY_MEMORY, expireThreads, mergeMemory } from "./memory";
 
 const t0 = new Date("2026-10-22T10:00:00Z");
 const later = (days: number) => new Date(t0.getTime() + days * 86400000);
@@ -78,5 +78,22 @@ describe("habits", () => {
   it("a one-off fact still expires", () => {
     const a = mergeMemory(EMPTY_MEMORY, { facts: [{ fact: "Had coffee in the sun", expiresInDays: 1 }] }, "c1", t0).memory;
     expect(mergeMemory(a, {}, "c2", later(3)).memory.facts).toHaveLength(0);
+  });
+});
+
+describe("morning intention bridge", () => {
+  it("atLocalHour gives 18:00 in the person's own timezone, daylight saving included", () => {
+    // 22 Oct 2026 10:00 UTC; London is on BST (UTC+1) -> 18:00 local = 17:00 UTC
+    expect(atLocalHour(new Date("2026-10-22T10:00:00Z"), "Europe/London", 18).toISOString()).toBe("2026-10-22T17:00:00.000Z");
+    // New York is on EDT (UTC-4) -> 18:00 local = 22:00 UTC
+    expect(atLocalHour(new Date("2026-10-22T10:00:00Z"), "America/New_York", 18).toISOString()).toBe("2026-10-22T22:00:00.000Z");
+  });
+
+  it("a morning intention is not due until the evening, then due, then expires", () => {
+    const morning = new Date("2026-10-22T08:00:00Z"); // 09:00 London
+    const m = mergeMemory(EMPTY_MEMORY, { threads: [{ topic: "Dinner with Sam", notBeforeHour: 18, expiresInDays: 1, suggestedCheckin: "How was dinner with Sam?" }] }, "c1", morning, "Europe/London").memory;
+    expect(dueThreads(m, new Date("2026-10-22T12:00:00Z"))).toHaveLength(0);
+    expect(dueThreads(m, new Date("2026-10-22T17:30:00Z"))).toHaveLength(1);
+    expect(dueThreads(m, new Date("2026-10-23T09:00:00Z"))).toHaveLength(0);
   });
 });

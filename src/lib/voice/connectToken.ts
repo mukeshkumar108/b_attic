@@ -2,6 +2,11 @@ import { createHmac, timingSafeEqual } from "crypto";
 
 export const VOICE_CONNECT_FLOWS = [
   "onboarding",
+  "morning",
+  "daytime",
+  "evening",
+  "ten_things",
+  // earlier flows, still accepted so existing clients keep working
   "first_reflection_day0",
   "first_reflection_core",
   "voice_demo",

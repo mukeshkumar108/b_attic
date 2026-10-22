@@ -4,12 +4,15 @@ import { prisma } from "@/lib/prisma";
 import { claimsFromBearer } from "@/lib/voice/connectToken";
 import { asMemoryState, mergeMemory, REPORT_GRACE_SEC } from "@/lib/voice/memory";
 
+/** What a session's card is about, so the library can label it. */
+const CARD_KIND: Record<string, string> = { morning: "intention", ten_things: "self" };
+
 const sensitivity = z.enum(["nominal", "sensitive"]);
 const delta = z.object({
   people: z.array(z.object({ ref: z.string().optional(), name: z.string(), relation: z.string().optional(), meaning: z.string().optional(), sensitivity: sensitivity.optional(), basis: z.string().optional() })).optional(),
   themes: z.array(z.object({ ref: z.string().optional(), label: z.string(), sensitivity: sensitivity.optional(), basis: z.string().optional() })).optional(),
   facts: z.array(z.object({ ref: z.string().optional(), recurring: z.boolean().optional(), fact: z.string(), category: z.string().optional(), sensitivity: sensitivity.optional(), expiresInDays: z.number().optional(), basis: z.string().optional() })).optional(),
-  threads: z.array(z.object({ ref: z.string().optional(), topic: z.string(), status: z.enum(["open", "followed_up", "resolved", "expired"]).optional(), notBeforeDays: z.number().optional(), expiresInDays: z.number().optional(), suggestedCheckin: z.string().optional(), sensitivity: sensitivity.optional(), basis: z.string().optional() })).optional(),
+  threads: z.array(z.object({ ref: z.string().optional(), topic: z.string(), status: z.enum(["open", "followed_up", "resolved", "expired"]).optional(), notBeforeDays: z.number().optional(), notBeforeHour: z.number().int().min(0).max(23).optional(), expiresInDays: z.number().optional(), suggestedCheckin: z.string().optional(), sensitivity: sensitivity.optional(), basis: z.string().optional() })).optional(),
   style: z.object({ notes: z.array(z.string()).optional() }).optional(),
 });
 
@@ -46,7 +49,7 @@ export async function POST(request: NextRequest) {
   if (existingReport) return NextResponse.json({ ok: true, duplicate: true });
 
   const row = await prisma.userMemory.findUnique({ where: { userId: claims.uid } });
-  const { memory, applied } = mergeMemory(asMemoryState(row as never), b.memoryDelta ?? {}, claims.cid);
+  const { memory, applied } = mergeMemory(asMemoryState(row as never), b.memoryDelta ?? {}, claims.cid, new Date(), claims.tz);
   const directive = memory.style.lastDirective?.conversationId === claims.cid ? memory.style.lastDirective : null;
   const json = (v: unknown) => (v ?? undefined) as never;
   const memoryData = { people: json(memory.people), themes: json(memory.themes), facts: json(memory.facts), openThreads: json(memory.openThreads), style: json(memory.style) };
@@ -55,7 +58,7 @@ export async function POST(request: NextRequest) {
     prisma.voiceSessionReport.create({
       data: {
         userId: claims.uid, conversationId: claims.cid, flow: b.flow ?? claims.flow, durationSeconds: b.durationSeconds,
-        card: json(b.card), profile: json(b.profile), voiceFeatures: json(b.voiceFeatures), memoryUpdates: json(applied),
+        card: json(b.card ? { ...b.card, kind: CARD_KIND[b.flow ?? claims.flow] ?? "moment" } : b.card), profile: json(b.profile), voiceFeatures: json(b.voiceFeatures), memoryUpdates: json(applied),
         costUsd: b.costUsd, models: json({ ...b.models, ...(directive ? { directive: directive.applied } : {}) }),
         promptVersion: b.promptVersion, ruleVersion: directive?.ruleVersion ?? b.ruleVersion,
       },

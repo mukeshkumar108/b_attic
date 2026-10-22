@@ -99,7 +99,7 @@ export function sessionContext(reports: ReportSignals[], timezone: string, now: 
   const today = localDay(now, timezone);
   const earlierToday = reports.filter((r) => localDay(r.createdAt, timezone) === today).length;
   if (earlierToday > 0) {
-    return { kind: "again_today", line: `They are back again: this is session ${earlierToday + 1} today. It is ${part} where they are. Welcome them back lightly and ask if something happened or there is something they want to capture.` };
+    return { kind: "again_today", line: `They have already had ${earlierToday} session${earlierToday > 1 ? "s" : ""} today; this is number ${earlierToday + 1}. It is ${part} where they are.` };
   }
   const days = Math.round((now.getTime() - reports[0].createdAt.getTime()) / 86_400_000);
   const since = days <= 1 ? "yesterday" : `${days} days ago`;
@@ -121,7 +121,13 @@ export function buildDirective(memory: MemoryState, reports: ReportSignals[], no
     applied.push("known_people");
   }
 
-  const habits = memory.facts.filter((f) => f.habit && f.sensitivity === "nominal").slice(-3);
+  const selfRegard = memory.facts.filter((f) => f.category === "self_regard" && f.sensitivity === "nominal").slice(-4);
+  if (selfRegard.length) {
+    lines.push(`Things they have said they like about themselves: ${selfRegard.map((f) => f.fact).join("; ")}. Bring one back only if it fits naturally.`);
+    applied.push("self_regard");
+  }
+
+  const habits = memory.facts.filter((f) => f.habit && f.category !== "self_regard" && f.sensitivity === "nominal").slice(-3);
   for (const h of habits) lines.push(`Known, not news: ${h.fact}${h.count && h.count > 1 ? ` (mentioned ${h.count} times)` : ""}. Do not ask about it as if new.`);
   if (habits.length) applied.push("habits");
   const recurring = memory.themes.filter((t) => t.count >= 2 && t.sensitivity === "nominal").slice(-2);

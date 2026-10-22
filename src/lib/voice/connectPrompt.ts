@@ -1,9 +1,18 @@
 import { fillTemplate, loadPromptMdStrict } from "@/lib/llm/openrouter";
-import {
-  getDefaultVoicePromptBinding,
-  getFirstReflectionPromptBindingFromTrack,
-} from "@/lib/voice/promptRegistry";
+import { getFirstReflectionPromptBindingFromTrack } from "@/lib/voice/promptRegistry";
 import type { VoiceConnectFlow } from "@/lib/voice/connectToken";
+
+/** Flows built from shared modules (kernel + product + the flow's own text + rules). The earlier flows below keep their single prompt files. */
+export const MODULAR_FLOWS = ["onboarding", "morning", "daytime", "evening", "ten_things"] as const;
+export type ModularFlow = (typeof MODULAR_FLOWS)[number];
+export const isModularFlow = (flow: string): flow is ModularFlow => (MODULAR_FLOWS as readonly string[]).includes(flow);
+
+const MODULE_DIR = "src/lib/llm/prompts/modules";
+const moduleText = (name: string) => loadPromptMdStrict(`${MODULE_DIR}/${name}.md`).trim();
+
+export function composeModularPrompt(flow: ModularFlow): string {
+  return [moduleText("kernel"), moduleText("product"), moduleText(flow), moduleText("rules")].join("\n\n");
+}
 
 const IDENTITY_KERNEL_PATH = "src/lib/llm/prompts/voice_identity_kernel_v1.md";
 const DEMO_MAIN_PATH = "src/lib/llm/prompts/voice_demo_main_v1.md";
@@ -26,11 +35,8 @@ export function loadFlowConstitution(
   flow: VoiceConnectFlow,
   params: { displayName?: string | null } = {}
 ): string {
+  if (isModularFlow(flow)) return composeModularPrompt(flow);
   switch (flow) {
-    case "onboarding": {
-      const binding = getDefaultVoicePromptBinding("ONBOARDING");
-      return stripOutputContract(loadPromptMdStrict(binding!.templatePath));
-    }
     case "first_reflection_day0":
       return stripOutputContract(loadPromptMdStrict(getFirstReflectionPromptBindingFromTrack("day0").templatePath));
     case "first_reflection_core":
