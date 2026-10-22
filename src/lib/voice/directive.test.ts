@@ -109,3 +109,11 @@ describe("things they like about themselves", () => {
     expect(d.text).not.toMatch(/Known, not news: Is a good listener/);
   });
 });
+
+describe("their name", () => {
+  it("is given to her lightly, with pronouns when shared", () => {
+    const d = buildDirective(EMPTY_MEMORY, [], now, "UTC", "evening", { name: "Sam", pronouns: "they/them" })!;
+    expect(d.text).toMatch(/Their name is Sam\. Use it now and then, not every turn\. Their pronouns are they\/them\./);
+    expect(buildDirective(EMPTY_MEMORY, [], now, "UTC", "evening", { name: " " })!.text).not.toMatch(/Their name is/);
+  });
+});

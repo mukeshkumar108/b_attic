@@ -25,7 +25,10 @@ export async function GET(request: NextRequest) {
   const constitution = loadFlowConstitution(claims.flow, {
     displayName: (user as { displayName?: string | null }).displayName,
   });
-  const directive = await personalise(claims.uid, claims.cid, claims.tz, claims.flow);
+  const directive = await personalise(claims.uid, claims.cid, claims.tz, claims.flow, {
+    name: (user as { displayName?: string | null }).displayName,
+    pronouns: (user as { pronouns?: string | null }).pronouns,
+  });
 
   return NextResponse.json({
     history: [],
@@ -41,7 +44,13 @@ export async function GET(request: NextRequest) {
  * What we know about this person, as a short block for the prompt. A thread that is surfaced here is marked
  * followed_up so it is only offered once. Never blocks the call: any failure just means no personalisation.
  */
-async function personalise(userId: string, conversationId: string, timezone: string, flow: string): Promise<string | null> {
+async function personalise(
+  userId: string,
+  conversationId: string,
+  timezone: string,
+  flow: string,
+  person: { name?: string | null; pronouns?: string | null }
+): Promise<string | null> {
   try {
     const row = await prisma.userMemory.findUnique({ where: { userId } });
     const now = new Date();
@@ -57,7 +66,8 @@ async function personalise(userId: string, conversationId: string, timezone: str
       reports.map((r) => ({ createdAt: r.createdAt, profile: r.profile as never, voiceFeatures: r.voiceFeatures as never })),
       now,
       timezone,
-      flow
+      flow,
+      person
     );
     if (!directive) return null;
     if (!row) return directive.text;

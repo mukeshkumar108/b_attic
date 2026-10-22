@@ -114,9 +114,14 @@ export function sessionContext(reports: ReportSignals[], timezone: string, now: 
 }
 
 /** The "what you know about them" block added to Bloom's prompt, or null when there is nothing to add. */
-export function buildDirective(memory: MemoryState, reports: ReportSignals[], now: Date = new Date(), timezone = "UTC", flow?: string): Directive | null {
+export function buildDirective(memory: MemoryState, reports: ReportSignals[], now: Date = new Date(), timezone = "UTC", flow?: string, person?: { name?: string | null; pronouns?: string | null }): Directive | null {
   const lines: string[] = [];
   const applied: string[] = [];
+
+  if (person?.name?.trim()) {
+    lines.push(`Their name is ${person.name.trim()}. Use it now and then, not every turn.${person.pronouns?.trim() ? ` Their pronouns are ${person.pronouns.trim()}.` : ""}`);
+    applied.push("name");
+  }
 
   const ctx = sessionContext(reports, timezone, now, flow);
   lines.push(ctx.line);

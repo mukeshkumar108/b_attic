@@ -68,6 +68,10 @@ model User {
   onboardingCompletedAt       DateTime?
   reflectionReminderEnabled   Boolean   @default(true)
   reflectionReminderTimeLocal String? // "HH:MM" format
+  // Optional profile details the person chooses to share
+  pronouns                    String?
+  gender                      String?
+  birthYear                   Int?
   createdAt                   DateTime  @default(now())
   updatedAt                   DateTime  @updatedAt
 
