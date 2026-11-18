@@ -1,9 +1,9 @@
 /**
  * GET /api/bluum/lessons
- * Returns lesson/snack audio catalog from Vercel Blob.
+ * Returns lesson/snack audio catalog from object storage.
  */
 
-import { list } from "@vercel/blob";
+import { list } from "@/lib/storage";
 import { NextRequest, NextResponse } from "next/server";
 import { AuthError, errorResponse, requireUser } from "@/lib/auth/requireUser";
 

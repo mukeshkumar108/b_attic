@@ -13,7 +13,7 @@ const envSchema = z
     CLERK_AUTHORIZED_PARTIES: z.string().min(1).optional(),
     POSTGRES_PRISMA_URL: z.string().min(1),
     POSTGRES_URL_NON_POOLING: z.string().min(1),
-    BLOB_READ_WRITE_TOKEN: z.string().min(1),
+    BLOB_READ_WRITE_TOKEN: z.string().min(1).optional(), // legacy; storage now uses S3_* env or local disk (src/lib/storage.ts)
     CLERK_WEBHOOK_SECRET: z.string().min(1),
     // OpenRouter for LLM calls (optional - fallback behavior if not set)
     OPENROUTER_API_KEY: z.string().min(1).optional(),

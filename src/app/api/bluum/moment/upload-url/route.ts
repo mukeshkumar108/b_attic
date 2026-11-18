@@ -4,7 +4,7 @@
  */
 
 import { NextRequest, NextResponse } from "next/server";
-import { put } from "@vercel/blob";
+import { put } from "@/lib/storage";
 import { requireUser, AuthError, errorResponse } from "@/lib/auth/requireUser";
 
 export async function POST(request: NextRequest) {

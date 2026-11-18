@@ -7,7 +7,25 @@ import { z } from "zod";
 import fs from "fs";
 import path from "path";
 
-const OPENROUTER_API_URL = "https://openrouter.ai/api/v1/chat/completions";
+// Chat-completions endpoint is configurable so a self-hosted deploy can point at any OpenAI-compatible provider
+// (LLM_API_URL + LLM_API_KEY). Defaults keep the original OpenRouter behaviour.
+const OPENROUTER_API_URL =
+  process.env.LLM_API_URL?.trim() || "https://openrouter.ai/api/v1/chat/completions";
+
+/**
+ * OpenRouter serves one model from many providers at different prices (up to 3-4x the headline price). Every request names its provider policy:
+ * cheapest first, no 4-bit builds, a hard price ceiling in $ per million tokens. Only added when the endpoint is OpenRouter itself.
+ */
+function providerRouting(): Record<string, unknown> | undefined {
+  if (!OPENROUTER_API_URL.includes("openrouter.ai")) return undefined;
+  if ((process.env.OPENROUTER_PROVIDER_ROUTING || "").toLowerCase() === "off") return undefined;
+  return {
+    sort: "price",
+    allow_fallbacks: true,
+    quantizations: ["fp8", "bf16", "fp16", "fp32", "unknown"],
+    max_price: { prompt: 1.0, completion: 4.0 },
+  };
+}
 const DEFAULT_MODEL = "anthropic/claude-3-haiku-20240307";
 
 function isRetryableOpenRouterStatus(status: number): boolean {
@@ -354,7 +372,7 @@ export function fillTemplate(
  * Call OpenRouter API and return raw response text.
  */
 export async function callOpenRouter(prompt: string): Promise<string> {
-  const apiKey = process.env.OPENROUTER_API_KEY;
+  const apiKey = process.env.LLM_API_KEY?.trim() || process.env.OPENROUTER_API_KEY;
   if (!apiKey) {
     throw new Error("OPENROUTER_API_KEY not set");
   }
@@ -379,6 +397,7 @@ export async function callOpenRouter(prompt: string): Promise<string> {
       ],
       temperature: 0.3,
       max_tokens: 500,
+      provider: providerRouting(),
     }),
   });
 
@@ -411,7 +430,7 @@ export async function callOpenRouterWithOptions(
   prompt: string,
   options?: OpenRouterCallOptions
 ): Promise<string> {
-  const apiKey = process.env.OPENROUTER_API_KEY;
+  const apiKey = process.env.LLM_API_KEY?.trim() || process.env.OPENROUTER_API_KEY;
   if (!apiKey) {
     throw new Error("OPENROUTER_API_KEY not set");
   }
@@ -441,6 +460,7 @@ export async function callOpenRouterWithOptions(
         ],
         temperature,
         max_tokens: maxTokens,
+        provider: providerRouting(),
       }),
     });
   } catch (err) {

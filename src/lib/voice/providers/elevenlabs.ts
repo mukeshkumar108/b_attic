@@ -1,4 +1,4 @@
-import { put } from "@vercel/blob";
+import { put } from "@/lib/storage";
 import { env } from "@/env";
 import { VOICE_AUDIO_URL_TTL_SECONDS } from "@/lib/voice/constants";
 

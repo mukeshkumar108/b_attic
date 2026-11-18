@@ -6,6 +6,7 @@ const isPublicRoute = createRouteMatcher([
   "/sign-up(.*)",
   // Called by the voice server, not a browser: these routes verify the signed call token themselves.
   "/api/voice/(.*)",
+  "/api/files/(.*)",
 ]);
 
 function isVoiceTestBypass(req: Request): boolean {

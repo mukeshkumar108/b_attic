@@ -19,11 +19,11 @@ vi.mock("@/lib/auth/requireUser", () => {
   };
 });
 
-vi.mock("@vercel/blob", () => ({
+vi.mock("@/lib/storage", () => ({
   list: vi.fn(),
 }));
 
-import { list } from "@vercel/blob";
+import { list } from "@/lib/storage";
 import {
   AuthError,
   requireUser,
